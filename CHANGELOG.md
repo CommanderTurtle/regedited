@@ -87,6 +87,11 @@ Notable changes to Regedited.
 |Helper scripts|6 files|**9 files** (+3 new)|
 |Total Pi package|~720 lines|**1,360 lines**|
 
+---
+
+---
+
+
 ## [0.0.9b] — 2026-06-08
 
 ### Added
