@@ -1,0 +1,72 @@
+[package]
+name = "regedited"
+version = "0.1.0"
+edition = "2021"
+authors = ["CommanderTurtle <clement.keynote-1e@icloud.com>"]
+description = "A fast plaintext parse-ment database with structured headers, key-value store, and zone extraction"
+license = "AGPL-3.0"
+repository = "https://github.com/CommanderTurtle/regedited"
+keywords = ["database", "plaintext", "markdown", "parser", "memory-mapped"]
+categories = ["database-implementations", "parsing", "command-line-utilities"]
+rust-version = "1.70"
+
+[[bin]]
+name = "regedited"
+path = "src/main.rs"
+
+[dependencies]
+# Memory mapping for zero-copy file access
+memmap2 = "0.9"
+
+# Fast parsing with nom
+nom = "7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# CLI parsing
+clap = { version = "4.4", features = ["derive"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Regex for pattern matching
+regex = "1.10"
+
+# Clipboard support (cross-platform)
+# On Windows, this uses the native clipboard API
+arboard = "3.3"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Colored output
+owo-colors = "4.0"
+
+# Byteorder for binary parsing
+byteorder = "1.5"
+
+# Fast hashing
+fxhash = "0.2"
+
+# Windows-specific dependencies
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_System_Memory", "Win32_Foundation"] }
+
+[dev-dependencies]
+tempfile = "3.9"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
