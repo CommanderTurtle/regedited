@@ -1,9 +1,9 @@
 [package]
 name = "regedited"
-version = "0.1.0"
-edition = "2021"
-authors = ["CommanderTurtle <clement.keynote-1e@icloud.com>"]
-description = "A fast plaintext parse-ment database with structured headers, key-value store, and zone extraction"
+version = "0.2.0"
+edition = "2026"
+authors = ["CommanderTurtle"]
+description = "The registry, edited. Fast plaintext parse-ment database with WAL crash safety, transactions, schema enforcement, typed registry values, and HTTP container mode."
 license = "AGPL-3.0"
 repository = "https://github.com/CommanderTurtle/regedited"
 keywords = ["database", "plaintext", "markdown", "parser", "memory-mapped"]
