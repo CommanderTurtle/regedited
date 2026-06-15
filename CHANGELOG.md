@@ -1,98 +1,56 @@
 # Changelog
 
-Notable changes to Regedited.
+All notable changes to Regedited.
+
+## [0.2.0] — 2026-06-15
+
+### Added —
+
+- **WAL (Write-Ahead Log)**: `wal`, `wal-replay` commands. Every mutation is logged to `.wal` before touching the main file. CRC32 checksums per entry. Automatic crash recovery on replay. (`src/wal.rs`, 723 lines, 6 tests)
+- **Transactions**: `tx begin`, `tx commit`, `tx rollback`, `tx status` commands. Batch multiple operations into a single atomic unit with all-or-nothing semantics. Uses WAL internally for durability. (`src/transaction.rs`, 436 lines, 4 tests)
+- **Schema enforcement**: `schema --init`, `schema --validate` commands. Optional per-section schemas for type-safe configuration. Supports string/int/bool/path/enum/array/hex types with required/optional/range/one_of/default constraints. Stored as `.schema` files. (`src/schema.rs`, 590 lines, 4 tests)
+- **Typed registry values**: `reg-types`, `reg-parse` commands. 10 registry types: REG_SZ, REG_DWORD, REG_QWORD, REG_BINARY, REG_MULTI_SZ, REG_EXPAND_SZ, REG_JSON, REG_TOML, REG_BOOL. Windows Registry compatible with Regedited extensions. (`src/typed_value.rs`, 433 lines, 8 tests)
+- **Registry container mode**: `serve --file --port` command. HTTP server with REST API exposing all document operations via endpoints: `/`, `/sections`, `/section/{name}`, `/section/{name}/db`, `/section/{name}/ascii`, `/section/{name}/zone/{i}`, `/grep`, `/types`, `/wal`, `/health`. (`src/serve.rs`, 460 lines)
+- **43+ CLI commands** (was 32)
+
+### Changed —
+
+- **Index line**: Changed from plain `123` to `index: 123`. Human-readable, renders correctly in all markdown viewers.
+- **Database line**: Changed from tab-separated `42\t7\t3\t...` to pipe-separated `42 | 7 | 3 | ...`. Renders correctly in Obsidian, GitHub, VS Code. Both formats accepted when reading (auto-detection).
+- **ASCII store**: Verified colon ` : ` separator consistency across all modules.
+- **Backward compatibility**: Readers auto-detect both old (tab) and new (pipe) formats. Writers emit v3 format.
+
+### Fixed —
+
+- **Critical bug in zone_editor.rs**: Delta threshold was `start_line`, should be `end_line + 1`. Zone's own hex-words were being corrupted on content replace. Fixed to only shift lines AFTER the zone.
+- **header.rs**: Removed dead `content_end_byte_offset` field (declared, never set, never used).
+- **header.rs**: Updated outdated doc comment referencing "UTF-16LE" (was from early prototype).
+- **store.rs add_section template**: Was malformed — only 6 zeros with `\t`, missing `index:` prefix, missing string lines. Fixed to proper v3 format.
+- **fast_ops.rs index parsing**: `fast_scan_content` used plain `.parse::<u64>()` which would fail on `index: 100`. Added `index:` prefix detection with legacy fallback.
+- **fast_ops.rs numeric parsing**: `parse_numeric_line_fast` only split on `\t`. Added auto-detection of ` | ` vs `\t`.
+- **main.rs db handler**: Numeric line split on `\t` only. Added pipe separator auto-detection.
+
+### Documentation
+
+- **README.md**: Updated all examples to v3 format. Added beginner tutorial section with Python and evcxr walkthroughs. Added performance comparison tables (vs grep, vs PowerShell, vs Python readlines).
+- **docs/ARCHITECTURE.md**: Consolidated from 5 separate files. Added "Serious Configuration Substrate Features" section covering WAL, transactions, schema, typed values, and serve mode. Updated module overview (21 modules). Updated command reference (43 commands).
+- **docs/FLOWCHART.md**: 7 comprehensive mermaid diagrams (module dependencies, CLI router, Python integration, evcxr integration, abilities map, read/write sequence diagrams).
+- **pi/SKILL.md**: Updated for v3 format and all new features. 361 lines covering 12 workflow categories.
+- **pi/references/**: Added `wal_and_transactions.md`, `schema_and_types.md`, `serve.md`.
+- **pi/scripts/**: Added `regedited_tx.sh`, `regedited_schema.sh`, `regedited_serve.sh`.
+- **examples/example.md**: Updated to v3 format.
+- **pi/assets/template.md**: Updated to v3 format.
+- **All source files**: Added AGPL-3.0 SPDX headers (21/21 files).
+
+### Performance (tested on 14,032-line test database markdown file)
+
+- 102/102 tests passed
+- Scan: 164 scans/sec on 14K lines
+- Hex-word encode: 1.7M encodes/sec
+- Grep: 97 matches in 15.5ms
+- Metadata overhead: 0.33% for 3 appended sections
 
 ## [0.1.0] — 2026-06-08
-
-### What Was Added (5 Major Features, 5 New Modules, 11 New CLI Commands)
-
-|#|Feature|Module|Commands|Copilot Priority|
-|:--|:--|:--|:--|:--|
-|1|**WAL (Write-Ahead Log)**|`src/wal.rs` (723 lines)|`wal`, `wal-replay`|**#1 — Crash-safe writes**|
-|2|**Transactions**|`src/transaction.rs`|`tx begin/commit/rollback/status`|**#3 — Batch atomicity**|
-|3|**Schema Enforcement**|`src/schema.rs`|`schema --validate --init`|**#2 — Type safety**|
-|4|**Typed Values**|`src/typed_value.rs`|`reg-types`, `reg-parse`|**#8 — Rich types**|
-|5|**Registry Container**|`src/serve.rs`|`serve --file --port`|**#10 — Remote access**|
-
-### Project Growth
-
-|Metric|Before|After|
-|:--|:--|:--|
-|Source modules|16|**21**|
-|Source lines (Rust)|8,115|**11,141** (+37%)|
-|CLI commands|32|**43**|
-|Documentation|2,837|**3,370** lines|
-
-### Feature Checklist — Status
-
-| #   | Feature                               | Status                                       |
-| :-- | :------------------------------------ | :------------------------------------------- |
-| 1   | Atomic crash-safe writes (WAL)        | **Implemented**                              |
-| 2   | Schema enforcement                    | **Implemented**                              |
-| 3   | Transactional batch edits             | **Implemented**                              |
-| 4   | Offline virtual registry hives        | Documented (`.regd` files ARE virtual hives) |
-| 5   | Diff-aware configuration (Git-native) | **Existing feature** — enhanced              |
-| 6   | Partial loading + mmap                | **Existing feature** — documented            |
-| 7   | Stable documented file format         | **Existing feature** — documented            |
-| 8   | Plugin system for typed values        | **Implemented** — 10 registry types          |
-| 9   | Windows API compatibility layer       | Design-ready (future DLL project)            |
-| 10  | Registry container mode               | **Implemented** — HTTP REST API              |
-
----
-
-# Pi / Agent Templates:
-
-### SKILL.md — Rewritten (361 lines, was 236)
-
-|Added|Details|
-|:--|:--|
-|**WAL workflows**|`wal`, `wal-replay --apply`, crash recovery flow|
-|**Transaction workflows**|`tx begin` / `commit` / `rollback` / `status` with full example script|
-|**Schema workflows**|`schema --init`, `schema --validate` with format reference|
-|**Typed values workflows**|`reg-types`, `reg-parse` with all 10 registry types|
-|**Serve workflows**|`serve --file --port` with curl examples|
-|**WAL file format**|`SEQ|TIMESTAMP|OPERATION|...|CRC32` documented|
-|**Schema file format**|Full `.schema` syntax with types and constraints|
-|**Python WAL check**|Detect uncommitted WAL in Python subprocess|
-|**Expanded trigger table**|14 scenarios (was 9)|
-
-### New Reference Docs (4 files, 384 lines)
-
-|File|Covers|
-|:--|:--|
-|`references/wal_and_transactions.md`|WAL format, recovery flow, transaction states, safe update script|
-|`references/schema_and_types.md`|Schema syntax, field types, constraints, Python validation pattern|
-|`references/serve.md`|All 13 REST endpoints, curl examples, Python client, Docker/CI usage|
-
-### Updated Reference Docs
-
-|File|Changes|
-|:--|:--|
-|`references/commands.md`|Added 11 new commands (wal, wal-replay, tx, schema, reg-types, reg-parse, serve)|
-
-### New Helper Scripts (3 files)
-
-|Script|Purpose|
-|:--|:--|
-|`scripts/regedited_tx.sh`|`begin` / `commit` / `rollback` / `status` wrapper|
-|`scripts/regedited_schema.sh`|`init` / `validate` / `show` wrapper|
-|`scripts/regedited_serve.sh`|`serve` with port, read-only flag, endpoint listing|
-
-### Final Pi Package Stats
-
-|Metric|Before|After|
-|:--|:--|:--|
-|SKILL.md|236 lines|**361 lines**|
-|Reference docs|3 files|**6 files** (+3 new)|
-|Helper scripts|6 files|**9 files** (+3 new)|
-|Total Pi package|~720 lines|**1,360 lines**|
-
----
-
----
-
-
-## [0.0.9b] — 2026-06-08
 
 ### Added
 

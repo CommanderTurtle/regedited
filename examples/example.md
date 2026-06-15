@@ -2,9 +2,9 @@
 
 This document demonstrates the structured plaintext database format (v3).
 Each section has:
-- An **index number** (base10)
-- A **hex-word store** (6 hex-words with embedded type nibbles)
-- **9 tab-separated numeric values** (displayed as pipes & dashes table)
+- An **index** in `index: N` format (human-readable, Obsidian-friendly)
+- A **hex-word store** (6 hex-words with embedded type nibbles, colon-separated)
+- **9 pipe-separated numeric values** (` | ` — renders in any markdown viewer)
 - **3 string lines** (one per line)
 - A `---` separator before content
 
@@ -26,9 +26,9 @@ Where `T` = type nibble, `LLLLLLL` = line number (28 bits = 268M max)
 ---
 
 ## SECTION: ProjectConfig
-100
+index: 100
 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000
-1	100	50	200	25	75	10	20	30
+1 | 100 | 50 | 200 | 25 | 75 | 10 | 20 | 30
 project root path
 config notes here
 https://github.com/user/project
@@ -48,86 +48,65 @@ This section contains the main project configuration.
 
 Run `cargo build --release` to build.
 
+---
+
 ## SECTION: CodeSnippets
-200
-0x00000000 : 0x00000000 : 0x1000003C : 0x10000042 : 0x00000000 : 0x00000000
-42	7	3	256	1024	4096	100	200	300
+index: 200
+0x00000000 : 0x00000000 : 0x1000003C : 0x1000004A : 0x00000000 : 0x00000000
+42 | 7 | 3 | 256 | 1024 | 4096 | 100 | 200 | 300
 main.rs core logic
 utility functions
 database connection code
 ---
-## Main Logic
+# Code Snippets
 
 ```rust
 fn main() {
     println!("Hello from Regedited!");
-    let store = Store::open("data.md").unwrap();
-    let zone = store.get_zone("CodeSnippets", 1).unwrap();
-    println!("{}", zone.content);
 }
 ```
 
-## Utilities
+## Database Access
 
-```rust
-pub fn checksum(data: &[u8]) -> u32 {
-    use std::hash::Hasher;
-    let mut hasher = fxhash::FxHasher32::default();
-    hasher.write(data);
-    hasher.finish() as u32
-}
+```python
+import subprocess
+
+# Extract zone 1 content
+result = subprocess.run(
+    ["regedited", "zone-extract", "example.md", "CodeSnippets", "1"],
+    capture_output=True, text=True
+)
+print(result.stdout)
 ```
 
-## Database
-
-```rust
-pub struct Store {
-    content: String,
-    header: DocumentHeader,
-}
-```
-
-## SECTION: Documentation
-300
-0x00000000 : 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000
-5	10	15	20	25	30	35	40	45
-table of contents
-api reference
-changelog notes
 ---
-# Documentation
 
-## Table of Contents
-
-1. Introduction
-2. Quick Start
-3. API Reference
-4. Examples
-
-## Quick Start
-
-Install with: `cargo install regedited`
-
-## API Reference
-
-### Store::open(path)
-
-Opens a markdown file and parses its structure.
-
-### Store::get_zone(name, index)
-
-Extracts a content zone by index (0-2).
-
-## SECTION: LinksAndRefs
-400
+## SECTION: DataTable
+index: 300
 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000
-3	0	0	0	0	0	0	0	0
-https://rust-lang.org
-https://docs.rs
-https://crates.io
+100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+data summary line
+data notes here
+data reference url
 ---
-## References
+# Data Table
 
-- [Rust Language](https://rust-lang.org)
-- [Documentation](https://docs.rs)
-- [Crates Registry](https://crates.io)
+| ID | Name    | Value | Status |
+|----|---------|-------|--------|
+| 1  | Item A  | 100   | active |
+| 2  | Item B  | 200   | active |
+| 3  | Item C  | 300   | draft  |
+
+---
+
+## SECTION: EmptySection
+index: 400
+0x00000000 : 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000
+0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0
+
+
+
+---
+# Empty Section
+
+This section has empty strings and zero values — useful as a template.

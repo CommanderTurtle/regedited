@@ -1,13 +1,13 @@
-So I rewrote the windows registry in rust.
+### So I rewrote the windows registry in rust.
 
 What makes `regedit` so great? Built from an initial joke on “Why need a DB? You should dangerously grep a million-line markdown file” 
 
+# Regedited
+
 > The best way to predict the future is to invent it.
  	- Alan Kay
-# Regedited
-> Regedit? there is no need. For it has been regedited.
 
-The registry, edited. A fast plaintext parsing database with structured headers, typed hex-word offsets, and O(1) section jumps on multi-GB files.
+> The registry, edited. A fast plaintext parse-ment database with structured headers, typed hex-word offsets, and O(1) section jumps on multi-GB files.
 
 Inspired by the [safetensors](https://github.com/huggingface/safetensors) format's ability to scan, diff, and replace keys in multi-gigabyte files without loading them into RAM — applied to structured markdown documents with full key-value semantics.
 
@@ -33,9 +33,9 @@ Each section carries 6 hex-words encoding 3 typed zone pairs. Change a zone's co
 
 ```markdown
 ## SECTION: CodeSnippets
-200
+index: 200
 0x00000000 : 0x00000000 : 0x1000003C : 0x10000042 : 0x00000000 : 0x00000000
-42	7	3	256	1024	4096	100	200	300
+42 | 7 | 3 | 256 | 1024 | 4096 | 100 | 200 | 300
 main.rs core logic
 utility functions
 database connection code
@@ -55,16 +55,16 @@ The document is automatically updated:
 
 ```markdown
 ## SECTION: CodeSnippets
-200
+index: 200
 0x00000000 : 0x00000000 : 0x1000003C : 0x1000004A : 0x00000000 : 0x00000000
-42	7	3	256	1024	4096	100	200	300
+42 | 7 | 3 | 256 | 1024 | 4096 | 100 | 200 | 300
 main.rs core logic
 utility functions
 database connection code
 ---
 fn new_function() { ... }      <-- lines 60-74 (zone 1, recalculated)
 ## SECTION: NextSection
-300
+index: 300
 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000 : 0x00000000
 ...                            <-- this section's line numbers also shifted +8
 ```
@@ -93,6 +93,56 @@ Each value is `0xTLLLLLLL` where `T` = type nibble, `L` = line number:
 | `0x30000001` | Database | 1 | Data at line 1 |
 
 ---
+
+### File Overview:
+
+```plain
+regedited/
+├── src/                          # 21 modules, 11,221 lines
+│   ├── main.rs                   # 1,984 lines — CLI (43 commands)
+│   ├── lib.rs                    # 392 lines — core types & re-exports
+│   ├── wal.rs                    # 723 lines, 6 tests — crash-safe writes
+│   ├── transaction.rs            # 436 lines, 4 tests — batch atomicity
+│   ├── schema.rs                 # 590 lines, 4 tests — type enforcement
+│   ├── typed_value.rs            # 433 lines, 8 tests — registry types
+│   ├── serve.rs                  # 460 lines — HTTP container
+│   ├── fast_ops.rs               # 808 lines, 9 tests — scan/diff/replace
+│   ├── zone_editor.rs            # 467 lines, 6 tests — content manipulation
+│   ├── store.rs                  # 657 lines, 11 tests — high-level API
+│   ├── header.rs                 # 555 lines, 9 tests — section scanner
+│   ├── db_line.rs                # 549 lines, 13 tests — 9-value parser
+│   ├── zone_type.rs              # 377 lines, 11 tests — hex-word codec
+│   ├── echo.rs                   # 530 lines, 15 tests — safe echo
+│   ├── encapsulate.rs            # 306 lines, 8 tests — b/c/d modes
+│   ├── html_extract.rs           # 399 lines, 13 tests — GRAB B/C/D
+│   ├── bool_ops.rs               # 356 lines, 10 tests — AND/NAND/OR/XOR
+│   ├── zone.rs                   # 462 lines, 6 tests — zone extraction
+│   ├── ascii_store.rs            # 240 lines, 5 tests — hex-word store
+│   ├── utf16.rs                  # 273 lines, 13 tests — DWORD encoding
+│   └── clip.rs                   # 224 lines, 6 tests — clipboard
+├── docs/                         # 5 docs (compatibility reference), ~2,800 lines
+│   ├── ARCHITECTURE.md           # comprehensive reference (500+ lines)
+│   ├── FLOWCHART.md              # 7 conceptual diagrams
+│   ├── USAGE.md                  # command redirect
+│   ├── FORMAT.md                 # format redirect
+│   └── PYTHON.md                 # Python redirect
+├── pi/                           # Pi/OMP skill package
+│   ├── SKILL.md                  # 361 lines, 12 workflow categories
+│   ├── README.md                 # skill package docs
+│   ├── install.sh                # global/local/OMP install
+│   ├── scripts/                  # 9 helper scripts
+│   ├── references/               # 6 reference docs
+│   └── assets/template.md        # v3 format template
+├── examples/                     # 2 examples
+│   ├── example.md                # v3 format demo
+│   └── python_workflow.py        # Python integration demo
+├── Cargo.toml                    # v0.2.0, AGPL-3.0
+├── CHANGELOG.md                  # full v0.1.0 + v0.2.0 history
+├── README.md                     # landing page with tutorial
+├── CONTRIBUTING.md               # contributor guide
+├── LICENSE                       # AGPL-3.0
+└── .gitignore                    # standard Rust
+```
 
 ## Quick Start
 
@@ -303,9 +353,9 @@ The scan is a one-time cost. After that, every section jump, zone extract, and c
 
 ```markdown
 ## SECTION: Name
-123                              <!-- Index number -->
+index: 123                       <!-- Index number -->
 0x00000000 : 0x00000000 : 0x1000003C : 0x10000042 : 0x00000000 : 0x00000000
-42	7	3	256	1024	4096	100	200	300   <!-- 9 tab-separated values -->
+42 | 7 | 3 | 256 | 1024 | 4096 | 100 | 200 | 300   <!-- 9 pipe-separated values -->
 First string line
 Second string line
 Third string line
@@ -313,8 +363,9 @@ Third string line
 ... markdown content ...
 ```
 
-- **6 hex-words** = 3 typed zone pairs (`0xTLLLLLLL` format)
-- **9 values** = configurable numeric database fields
+- **Index**: `index: N` — human-readable, Obsidian-friendly
+- **6 hex-words** = 3 typed zone pairs (`0xTLLLLLLL` format, colon-separated)
+- **9 values** = configurable numeric database fields (pipe ` | ` separated — renders in any markdown viewer)
 - **3 strings** = labels, paths, descriptions
 - **Content area** = opaque markdown, accessed via zone pointers
 
