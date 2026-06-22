@@ -2,9 +2,33 @@
 
 All notable changes to Regedited.
 
-## [0.2.0] — 2026-06-15
+## [0.3.0] — 2025-06-22
 
-### Added —
+### Added
+
+- **`"regedited open"` trigger**: Scanner finds `regedited open` anywhere in a line — inside HTML comments (`<!-- regedited open SectionName -->`), JS/CSS comments (`// regedited open`), shell comments (`# regedited open`), etc. Enables embedding Regedited indexes in any file format. Auto-generates names (`OpenTrigger-1`, `OpenTrigger-2`) when no name follows.
+- **Enhanced clipboard commands**: 5 new CLI commands for copying to system clipboard:
+  - `clip-hexword <start> <end> --zone-type <type>` — Copy hex-word range
+  - `clip-zone <file> <section> <zone_idx>` — Copy zone content
+  - `clip-db <file> <section> <value_idx>` — Copy database value
+  - `clip-dbline <file> <section>` — Copy full database line
+  - `clip-ascii <file> <section>` — Copy ASCII store line
+
+### Changed — Hex-Word Format Revolution
+
+- **Format `TxLLLLLLL`**: The type digit is now the FIRST CHARACTER, not embedded in a `0x` prefix.
+  - Old: `0x1000003C` (10 chars, type 1 at bits 28-31)
+  - New: `1x000003C` (9 chars, type `1` immediately visible)
+  - `0x000000A` → `0x000000A` (type 0 stays visually similar)
+  - `1x0000050` → Code, line 80
+  - `2x0000A00` → Media, line 2560
+  - `3x0000001` → Database, line 1
+- **Backward compatibility**: `decode_hex_word()` auto-detects both formats. All existing documents continue to work.
+
+
+## [0.2.0] — 2025-06-16
+
+### Added — 
 
 - **WAL (Write-Ahead Log)**: `wal`, `wal-replay` commands. Every mutation is logged to `.wal` before touching the main file. CRC32 checksums per entry. Automatic crash recovery on replay. (`src/wal.rs`, 723 lines, 6 tests)
 - **Transactions**: `tx begin`, `tx commit`, `tx rollback`, `tx status` commands. Batch multiple operations into a single atomic unit with all-or-nothing semantics. Uses WAL internally for durability. (`src/transaction.rs`, 436 lines, 4 tests)
@@ -55,7 +79,7 @@ All notable changes to Regedited.
 ### Added
 
 - **Core format**: Structured markdown with `## SECTION:` headers, index numbers, hex-word stores, 9 database values, and 3 string lines
-- **Hex-word store**: `0xTLLLLLLL` format with embedded type nibbles (Markdown, Code, Media, Database)
+- **Hex-word store**: format with embedded type nibbles (Markdown, Code, Media, Database)
 - **Fast scan**: Safetensors-style header-only scan that reads metadata without loading content
 - **Fast diff**: Metadata-only file comparison
 - **Fast replace**: Patch sections from source into target
