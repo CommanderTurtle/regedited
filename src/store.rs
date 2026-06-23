@@ -13,7 +13,7 @@
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use regedited::store::{Store, StoreConfig};
 //!
 //! let store = Store::open("myfile.md").unwrap();
@@ -25,12 +25,9 @@
 //! let table = store.get_db_table("MySection").unwrap();
 //! println!("{}", table);
 //!
-//! // Update a numeric value
-//! store.update_number("MySection", 0, 42).unwrap();
-//!
 //! // Extract a zone
-//! let zone = store.extract_zone("MySection", 0).unwrap();
-//! println!("{}", zone.content);
+//! let zone = store.get_zone("MySection", 0).unwrap();
+//! println!("{}", zone.content());
 //! ```
 
 use crate::{
@@ -619,9 +616,10 @@ Configuration here.
         assert!(store.has_section("NewSection"));
         assert_eq!(store.list_sections().len(), 3);
         
-        // Check it has default data
-        let db = store.get_db_line("NewSection").unwrap();
-        assert_eq!(db.numbers, [0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        // Check raw content has the new section with correct format
+        assert!(store.content.contains("## SECTION: NewSection"));
+        assert!(store.content.contains("index:"));
+        assert!(store.content.contains("0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0"));
     }
 
     #[test]

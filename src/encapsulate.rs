@@ -52,7 +52,7 @@
 //! // → ["'hello world'"]
 //! ```
 
-use crate::{Result, RegeditedError};
+use crate::Result;
 
 /// The three encapsulation modes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

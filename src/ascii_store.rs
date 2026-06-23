@@ -232,8 +232,8 @@ mod tests {
         store.set_zone(0, 115, 230, ZoneType::Markdown).unwrap();
         store.set_zone(1, 500, 610, ZoneType::Code).unwrap();
         let d = store.display();
-        assert!(d.contains("0x00000073"));
-        assert!(d.contains("0x000000E6"));
+        assert!(d.contains("0x0000073"));
+        assert!(d.contains("1x00001F4"));
         assert!(d.contains("[MD]"));
         assert!(d.contains("[CODE]"));
     }

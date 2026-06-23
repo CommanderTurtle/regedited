@@ -72,10 +72,10 @@ impl BoolResult {
 
 /// Boolean AND: content must contain ALL patterns
 ///
-//! ```bash
-//! regedited bool-and doc.md MySection "rust" "fn" "main"
-//! # TRUE | Section 'MySection' contains ALL 3 patterns | matches=5
-//! ```
+/// ```bash
+/// regedited bool-and doc.md MySection "rust" "fn" "main"
+/// # TRUE | Section 'MySection' contains ALL 3 patterns | matches=5
+/// ```
 pub fn bool_and(content: &str, patterns: &[String]) -> BoolResult {
     let lines: Vec<&str> = content.lines().collect();
     let lower_lines: Vec<String> = lines.iter().map(|l| l.to_lowercase()).collect();
@@ -116,10 +116,10 @@ pub fn bool_and(content: &str, patterns: &[String]) -> BoolResult {
 
 /// Boolean NAND: contains first pattern but NOT second
 ///
-//! ```bash
-//! regedited bool-nand doc.md MySection "fn" "python"
-//! # TRUE | Section contains 'fn' but NOT 'python' | matches=3
-//! ```
+/// ```bash
+/// regedited bool-nand doc.md MySection "fn" "python"
+/// # TRUE | Section contains 'fn' but NOT 'python' | matches=3
+/// ```
 pub fn bool_nand(content: &str, must_contain: &str, must_not: &str) -> BoolResult {
     let lines: Vec<&str> = content.lines().collect();
     let lower_lines: Vec<String> = lines.iter().map(|l| l.to_lowercase()).collect();
@@ -149,10 +149,10 @@ pub fn bool_nand(content: &str, must_contain: &str, must_not: &str) -> BoolResul
 
 /// Boolean OR: content contains ANY of the patterns
 ///
-//! ```bash
-//! regedited bool-or doc.md MySection "rust" "python" "go"
-//! # TRUE | Section contains ANY of 3 patterns | matches=5
-//! ```
+/// ```bash
+/// regedited bool-or doc.md MySection "rust" "python" "go"
+/// # TRUE | Section contains ANY of 3 patterns | matches=5
+/// ```
 pub fn bool_or(content: &str, patterns: &[String]) -> BoolResult {
     let lines: Vec<&str> = content.lines().collect();
     let lower_lines: Vec<String> = lines.iter().map(|l| l.to_lowercase()).collect();
@@ -218,10 +218,10 @@ pub fn bool_xor(content: &str, pattern_a: &str, pattern_b: &str) -> BoolResult {
 
 /// Count occurrences of a pattern
 ///
-//! ```bash
-//! regedited count doc.md MySection "fn"
-//! # 3 | Pattern 'fn' found 3 times across 45 lines
-//! ```
+/// ```bash
+/// regedited count doc.md MySection "fn"
+/// # //! # 3 | Pattern 'fn' found 3 times across 45 lines
+/// ```
 pub fn count(content: &str, pattern: &str) -> (usize, Vec<(usize, String)>) {
     let lines: Vec<&str> = content.lines().collect();
     let lower_pattern = pattern.to_lowercase();
@@ -252,10 +252,10 @@ pub fn is_zone_empty(content: &str) -> BoolResult {
 
 /// If-contains-then: if content contains pattern, return then_val, else return else_val
 ///
-//! ```bash
-//! regedited if-contains doc.md MySection "fn" --then "HAS_CODE" --else "NO_CODE"
-//! # HAS_CODE
-//! ```
+/// ```bash
+/// regedited if-contains doc.md MySection "fn" --then "HAS_CODE" --else "NO_CODE"
+/// # HAS_CODE
+/// ```
 pub fn if_contains(content: &str, pattern: &str, then_val: &str, else_val: &str) -> String {
     let lower_content = content.to_lowercase();
     let lower_pattern = pattern.to_lowercase();

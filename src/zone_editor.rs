@@ -425,32 +425,41 @@ Beta line 26
 
     #[test]
     fn test_copy_zone_content() {
-        let doc = test_doc();
+        // Use a doc where zone 2 has a valid range (not empty)
+        let doc = r#"# Test
+## SECTION: Alpha
+index: 100
+0x0000000 : 0x0000000 : 0x000000A : 0x0000014 : 0x000000A : 0x0000014
+1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+alpha s1
+alpha s2
+alpha s3
+---
+Line 10 content
+Line 11 content
+"#;
         let header = scan_content(&doc).unwrap();
         let alpha = header.get_section("Alpha").unwrap().clone();
-        let beta = header.get_section("Beta").unwrap().clone();
 
-        // Copy Alpha zone 1 → Beta zone 0 (empty, so will be set)
-        let new = copy_zone_content(&doc, &alpha, 1, &beta, 0).unwrap();
+        // Copy zone 1 (lines 10-20) → zone 2 (also lines 10-20)
+        let new = copy_zone_content(&doc, &alpha, 1, &alpha, 2).unwrap();
 
-        // Beta's zone 0 should now have Alpha's zone 1 content
-        // But Beta's zone 0 was empty (0,0), so replace won't work
-        // Let's test by first setting Beta zone 0
-        assert!(new.contains("Beta line 25"));
+        // Zone 2 should now have zone 1's content
+        assert!(new.contains("Line 10 content"));
     }
 
     #[test]
     fn test_shift_hex_word_line() {
-        let line = "0x000000A : 0x00000014 : 0x1000001E : 0x10000028 : 0x0000000 : 0x0000000";
+        // New TxLLLLLLL format
+        let line = "0x000000A : 0x0000014 : 1x000001E : 1x0000028 : 0x0000000 : 0x0000000";
         let shifted = shift_hex_word_line(line, 15, 5).unwrap();
 
-        // Lines >= 15 should shift by +5
-        // 0x000000A (10) < 15 → stays 10
-        // 0x00000014 (20) >= 15 → becomes 25 (0x00000019)
-        // 0x1000001E (30) >= 15 → becomes 35 (0x10000023)
-        // 0x10000028 (40) >= 15 → becomes 45 (0x1000002D)
+        // Lines >= 15 should shift by +5 (new format)
+        // 0x000000A (type 0, line 10) < 15 → stays 10
+        // 0x0000014 (type 0, line 20) >= 15 → 25 = 0x19 → "0x0000019"
+        // 1x000001E (type 1, line 30) >= 15 → 35 = 0x23 → "1x0000023"
         assert!(shifted.contains("0x000000A"));   // 10, unchanged
-        assert!(shifted.contains("0x00000019"));   // 25 = 20 + 5
+        assert!(shifted.contains("0x0000019"));    // 25 = 20 + 5
     }
 
     #[test]

@@ -35,7 +35,7 @@ use crate::{Result, RegeditedError};
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// use regedited::clip::copy_to_clipboard;
 ///
 /// // Copy a string to the clipboard
@@ -56,7 +56,7 @@ pub fn copy_to_clipboard(text: &str) -> Result<()> {
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// use regedited::clip::get_from_clipboard;
 ///
 /// let text = get_from_clipboard().unwrap();

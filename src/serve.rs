@@ -35,7 +35,7 @@
 //! ```
 
 use crate::{
-    header::{scan_content, DocumentHeader, SectionInfo},
+    header::{scan_content, DocumentHeader},
     wal::WalStatus,
     zone_editor::{extract_zone_content, format_zone_info},
     zone_type::ZoneType,
@@ -121,6 +121,13 @@ pub fn serve(config: ServeConfig) -> Result<()> {
 }
 
 fn handle_request(request: Request, state: Arc<ServerState>) {
+    // Handle /query specially since it needs to consume the request body
+    if *request.method() == Method::Post && request.url() == "/query" {
+        let response = handle_query(request, &state);
+        // handle_query calls respond internally
+        return;
+    }
+
     let response = match (request.method(), request.url()) {
         (Method::Get, "/") => handle_root(&state),
         (Method::Get, "/sections") => handle_sections(&state),
@@ -140,7 +147,6 @@ fn handle_request(request: Request, state: Arc<ServerState>) {
         (Method::Get, "/types") => handle_types(),
         (Method::Get, "/wal") => handle_wal(&state),
         (Method::Get, "/health") => handle_health(&state),
-        (Method::Post, "/query") => handle_query(request, &state),
         _ => json_response(404, r#"{"error": "Not found"}"#),
     };
 
@@ -386,14 +392,17 @@ fn handle_health(state: &ServerState) -> Response<std::io::Cursor<Vec<u8>>> {
     json_response(200, &body)
 }
 
-fn handle_query(request: Request, state: &ServerState) -> Response<std::io::Cursor<Vec<u8>>> {
+fn handle_query(mut request: Request, _state: &ServerState) {
     let mut content = String::new();
-    if let Ok(mut body) = request.as_reader().read_to_string(&mut content) {
+    let response = if request.as_reader().read_to_string(&mut content).is_ok() {
         // Parse simple JSON query: {"section":"X","operation":"and","patterns":["a","b"]}
         // For now, return a placeholder
         json_response(200, r#"{"status":"ok","note":"Boolean query endpoint - implement with request body parsing"}"#)
     } else {
         json_response(400, r#"{"error": "Failed to read request body"}"#)
+    };
+    if let Err(e) = request.respond(response) {
+        eprintln!("Query response error: {}", e);
     }
 }
 

@@ -357,7 +357,7 @@ impl SectionData {
 
     /// Full display including index, ASCII store, and DB line
     pub fn display(&self) -> String {
-        let mut parts = vec![
+        let parts = vec![
             format!("  Index: {}", self.index),
             self.ascii_store.display(),
             self.db_line.display_full(),
