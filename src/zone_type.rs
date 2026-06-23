@@ -19,11 +19,11 @@
 //!
 //! ## Examples
 //!
-//! ```
-//! 0x000000A  → Type 0 (Markdown), line 10
-//! 1x0000050  → Type 1 (Code), line 80
-//! 2x0000A00  → Type 2 (Media), line 2560
-//! 3x0000001  → Type 3 (Database), line 1
+//! ```text
+//! 0x000000A  // Type 0 (Markdown), line 10
+//! 1x0000050  // Type 1 (Code), line 80
+//! 2x0000A00  // Type 2 (Media), line 2560
+//! 3x0000001  // Type 3 (Database), line 1
 //! ```
 
 use crate::{Result, RegeditedError};
@@ -190,8 +190,8 @@ pub fn decode_hex_word(hex_word: &str) -> Result<(u32, ZoneType)> {
 
 /// Format a complete hex-word line with all 6 values
 ///
-/// ```
-/// 0x0000000 : 0x00000010 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+/// ```text
+/// 0x0000000 : 0x0000010 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 /// ```
 pub fn format_hex_word_line(
     pairs: &[(u32, u32)],
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn test_convert_to_hex_words() {
         let (start, end) = convert_to_hex_words(50, 80, ZoneType::Code);
-        assert_eq!(start, "1x000003C"); // Code, line 50
+        assert_eq!(start, "1x0000032"); // Code, line 50 (0x32)
         assert_eq!(end, "1x0000050");   // Code, line 80
     }
 
@@ -428,8 +428,8 @@ mod tests {
 
         for (zt, expected_first_hex) in cases {
             let encoded = encode_hex_word(50, zt);
-            // encoded = "1x000003C" — the '1' at position 3 (0-indexed) is the type
-            let first_char = encoded.chars().next().unwrap();
+            // encoded = "1x0000032" — the '1' at position 0 is the type
+            let first_hex_digit = encoded.chars().next().unwrap();
             assert_eq!(
                 first_hex_digit, expected_first_hex,
                 "Type {:?} should produce first hex digit '{}', got '{}' in {}",
@@ -461,10 +461,10 @@ mod tests {
     #[test]
     fn test_hex_word_bit_layout() {
         // New format: "TxLLLLLLL" — type as first char, 7 hex digits for line
-        // For Code (type=1) at line 50: "1x000003C"
+        // For Code (type=1) at line 50: "1x0000032" (50 = 0x32)
         // The type is immediately visible as the first character.
         let encoded = encode_hex_word(50, ZoneType::Code);
-        assert_eq!(encoded, "1x000003C");
+        assert_eq!(encoded, "1x0000032");
         assert_eq!(encoded.chars().next().unwrap(), '1'); // Type = Code
 
         let (line, zt) = decode_hex_word(&encoded).unwrap();

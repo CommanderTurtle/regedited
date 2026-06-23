@@ -1505,11 +1505,11 @@ fn cmd_zone_info(
 fn cmd_encap(
     text: &str,
     mode_str: &str,
-    extract: bool,
+    do_extract: bool,
     to: Option<String>,
     set_var: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if extract {
+    if do_extract {
         // Extract mode: pull inner content from encapsulated string
         let inner = extract(text)?;
         println!("{}", inner);

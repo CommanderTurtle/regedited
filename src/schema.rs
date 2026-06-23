@@ -42,6 +42,7 @@ use crate::{Result, RegeditedError};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[allow(unused_imports)]
 use std::str::FromStr;
 
 /// Schema version

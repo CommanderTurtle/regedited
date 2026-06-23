@@ -51,6 +51,7 @@
 //! are applied, or none are. The main file is never in an inconsistent state.
 
 use crate::{Result, RegeditedError};
+#[allow(unused_imports)]
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -121,7 +122,24 @@ impl WalOperation {
 
     /// Deserialize from WAL line body (after seq|timestamp|)
     fn deserialize_body(body: &str) -> Result<Self> {
-        let parts: Vec<&str> = body.split('|').collect();
+        // Split on | but not on \| (escaped pipes)
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut chars = body.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '|' {
+                // Check if this | is escaped (preceded by \)
+                if !current.ends_with('\\') {
+                    parts.push(std::mem::take(&mut current));
+                    continue;
+                }
+            }
+            current.push(c);
+        }
+        if !current.is_empty() || body.ends_with('|') {
+            parts.push(current);
+        }
+
         if parts.len() < 2 {
             return Err(RegeditedError::Parse(format!("Invalid WAL body: {}", body)));
         }
@@ -129,20 +147,20 @@ impl WalOperation {
         // Unescape pipes
         let unescape = |s: &str| s.replace("\\|", "|").replace("\\n", "\n");
 
-        match parts[0] {
-            "set-num" if parts.len() >= 6 => Ok(WalOperation::SetNum {
-                section: parts[1].to_string(),
+        match parts[0].as_str() {
+            "set-num" if parts.len() >= 5 => Ok(WalOperation::SetNum {
+                section: parts[1].clone(),
                 index: parts[2].parse().unwrap_or(0),
                 old_value: parts[3].parse().unwrap_or(0),
                 new_value: parts[4].parse().unwrap_or(0),
             }),
-            "set-str" if parts.len() >= 6 => Ok(WalOperation::SetStr {
-                section: parts[1].to_string(),
+            "set-str" if parts.len() >= 5 => Ok(WalOperation::SetStr {
+                section: parts[1].clone(),
                 index: parts[2].parse().unwrap_or(0),
-                old_value: unescape(parts[3]),
-                new_value: unescape(parts[4]),
+                old_value: unescape(&parts[3]),
+                new_value: unescape(&parts[4]),
             }),
-            "set-zone" if parts.len() >= 6 => {
+            "set-zone" if parts.len() >= 5 => {
                 let parse_range = |s: &str| -> Result<(u32, u32, String)> {
                     let rp: Vec<&str> = s.split(':').collect();
                     if rp.len() >= 3 {
@@ -152,24 +170,24 @@ impl WalOperation {
                     }
                 };
                 Ok(WalOperation::SetZone {
-                    section: parts[1].to_string(),
+                    section: parts[1].clone(),
                     zone: parts[2].parse().unwrap_or(0),
-                    old_range: parse_range(parts[3])?,
-                    new_range: parse_range(parts[4])?,
+                    old_range: parse_range(&parts[3])?,
+                    new_range: parse_range(&parts[4])?,
                 })
             }
             "section-add" if parts.len() >= 2 => Ok(WalOperation::SectionAdd {
-                section: parts[1].to_string(),
+                section: parts[1].clone(),
             }),
             "section-remove" if parts.len() >= 3 => Ok(WalOperation::SectionRemove {
-                section: parts[1].to_string(),
-                old_content: unescape(parts[2]),
+                section: parts[1].clone(),
+                old_content: unescape(&parts[2]),
             }),
-            "zone-replace" if parts.len() >= 6 => Ok(WalOperation::ZoneReplace {
-                section: parts[1].to_string(),
+            "zone-replace" if parts.len() >= 5 => Ok(WalOperation::ZoneReplace {
+                section: parts[1].clone(),
                 zone: parts[2].parse().unwrap_or(0),
-                old_content: unescape(parts[3]),
-                new_content: unescape(parts[4]),
+                old_content: unescape(&parts[3]),
+                new_content: unescape(&parts[4]),
             }),
             _ => Err(RegeditedError::Parse(format!("Unknown WAL op: {}", parts[0]))),
         }
@@ -323,7 +341,8 @@ impl Wal {
     }
 
     /// Get the WAL file path from the document path
-    fn wal_path(doc_path: &Path) -> PathBuf {
+    #[allow(dead_code)]
+    pub(crate) fn wal_path(doc_path: &Path) -> PathBuf {
         let mut p = doc_path.as_os_str().to_owned();
         p.push(".wal");
         PathBuf::from(p)

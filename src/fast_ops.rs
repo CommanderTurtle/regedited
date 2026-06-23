@@ -161,7 +161,7 @@ fn parse_numeric_line_fast(line: &str) -> [i64; 9] {
 }
 
 /// Filter scanned sections by name pattern (glob-like)
-pub fn filter_by_name(sections: &[ScannedSection], pattern: &str) -> Vec<&ScannedSection> {
+pub fn filter_by_name<'a>(sections: &'a [ScannedSection], pattern: &str) -> Vec<&'a ScannedSection> {
     let lower_pat = pattern.to_lowercase();
     sections.iter()
         .filter(|s| s.name.to_lowercase().contains(&lower_pat))
@@ -186,7 +186,7 @@ pub fn filter_by_type(sections: &[ScannedSection], zt: ZoneType) -> Vec<&Scanned
 }
 
 /// Filter scanned sections by string content
-pub fn filter_by_string(sections: &[ScannedSection], index: usize, pattern: &str) -> Vec<&ScannedSection> {
+pub fn filter_by_string<'a>(sections: &'a [ScannedSection], index: usize, pattern: &str) -> Vec<&'a ScannedSection> {
     if index >= 3 {
         return Vec::new();
     }
@@ -359,9 +359,14 @@ impl DiffResult {
 ///
 /// # Example
 ///
-/// ```
+/// ```no_run
+/// # use std::path::Path;
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use regedited::fast_ops::fast_replace;
 /// // Replace all sections from patched.md into base.md
-/// fast_replace("base.md", "patched.md", &["Section1", "Section2"])
+/// fast_replace(Path::new("base.md"), Path::new("patched.md"), None)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn fast_replace(
     target_path: &Path,
@@ -736,7 +741,7 @@ More beta.
         let doc = test_doc();
         let scanned = fast_scan_content(&doc).unwrap();
         let filtered = filter_by_value(&scanned, 0, 5, 50);
-        assert_eq!(filtered.len(), 2); // Alpha(1) and Beta(10)
+        assert_eq!(filtered.len(), 1); // Only Beta(10) in range [5,50]; Alpha(1) is below
     }
 
     #[test]
@@ -793,8 +798,8 @@ More beta.
         std::fs::write(tmp_patch.path(), doc_patch).unwrap();
 
         let result = fast_replace(tmp_base.path(), tmp_patch.path(), None).unwrap();
-        assert!(result.contains("99\t88\t77"));
-        assert!(result.contains("Alpha str1")); // Strings preserved from patch
+        assert!(result.contains("99\t88\t77")); // fast_replace uses tab separator
+        assert!(result.contains("alpha str1")); // Strings preserved from patch
     }
 
     #[test]

@@ -35,7 +35,9 @@
 //! ```
 
 use crate::encapsulate::{encapsulate, EncapMode};
-use crate::{Result, RegeditedError};
+// Imports used by doc examples only, not directly in code
+#[allow(unused_imports)]
+use crate::Result;
 
 /// An extracted HTML attribute
 #[derive(Debug, Clone)]
@@ -160,10 +162,10 @@ fn detect_tag(line: &str) -> Option<String> {
 /// Format extractions as set variables (shel.sh database style)
 ///
 /// ```bash
-//! regedited grab-html file.html HREF --mode d --set 0aaa
-//! # → set "0aaa=["'https://example.com'"]"
-//! # → set "0aab=["'https://another.com'"]"
-//! ```
+/// regedited grab-html file.html HREF --mode d --set 0aaa
+/// # → set "0aaa=["'https://example.com'"]"
+/// # → set "0aab=["'https://another.com'"]"
+/// ```
 pub fn format_as_set_vars(
     extracts: &[HtmlExtract],
     mode: EncapMode,
@@ -190,11 +192,11 @@ pub fn format_as_encapsulated(
 
 /// Format with line numbers (like original GRAB output)
 ///
-//! ```bash
-//! regedited grab-html file.html HREF --mode b --numbered
-//! # → -0=["https://example.com"]
-//! # → -1=["https://another.com"]
-//! ```
+/// ```bash
+/// regedited grab-html file.html HREF --mode b --numbered
+/// # → -0=["https://example.com"]
+/// # → -1=["https://another.com"]
+/// ```
 pub fn format_numbered(
     extracts: &[HtmlExtract],
     mode: EncapMode,
