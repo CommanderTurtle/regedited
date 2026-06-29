@@ -7,7 +7,11 @@ What makes `regedit` so great? Built from an initial joke on “Why need a DB? Y
 > The best way to predict the future is to invent it.
  	- Alan Kay
 
-> The registry, edited. A fast plaintext parse-ment database with structured headers, typed hex-word offsets, and O(1) section jumps on multi-GB files.
+The registry, edited. 
+
+> A fast plaintext parse-ment database with structured headers, typed hex-word offsets, and section jumps/diffs on multi-GB files.
+
+### "Turn any file into a registry"
 
 Inspired by the [safetensors](https://github.com/huggingface/safetensors) format's ability to scan, diff, and replace keys in multi-gigabyte files without loading them into RAM — applied to structured markdown documents with full key-value semantics.
 
