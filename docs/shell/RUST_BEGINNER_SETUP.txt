@@ -1,0 +1,261 @@
+REGEDITED RUST BEGINNER SETUP
+
+This is the short path for someone who is new to Rust and only wants to build,
+test, and run Regedited locally.
+
+What Rust gives you:
+
+rustc     The compiler.
+cargo     The package manager, test runner, and build tool.
+rustup    The toolchain installer/updater.
+
+Regedited's Cargo.toml currently declares:
+
+package name: regedited
+edition: 2021
+minimum Rust version: 1.70
+release binary name: regedited
+release binary path after build:
+  Windows: target\release\regedited.exe
+  Linux/macOS: target/release/regedited
+
+STEP 1 - Install Rust
+
+Windows, recommended:
+
+winget install --source winget --id Rustlang.Rustup
+
+Then close and reopen the shell so PATH refreshes.
+
+Windows, if winget is not desired:
+
+Download and run rustup from:
+https://rustup.rs/
+
+Linux/macOS:
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+Then close and reopen the shell, or run the source command rustup prints.
+
+STEP 2 - Confirm Rust is visible
+
+rustc --version
+cargo --version
+rustup --version
+
+If any of those are missing, the usual fix is adding this to PATH:
+
+Windows:
+%USERPROFILE%\.cargo\bin
+
+PowerShell current-session sanity check:
+
+$env:PATH -split ';' | Select-String '\\.cargo\\bin'
+
+Bash current-session sanity check:
+
+printf '%s\n' "$PATH" | tr ':' '\n' | grep '.cargo/bin'
+
+STEP 3 - Install the native C/C++ linker if Windows complains
+
+Most Rust CLI projects on Windows need the Microsoft MSVC linker.
+
+If cargo build fails with a linker error mentioning link.exe, MSVC, or Visual
+Studio Build Tools, install:
+
+Visual Studio Build Tools
+Workload: Desktop development with C++
+Individual components usually needed:
+  MSVC C++ build tools
+  Windows SDK
+  C++ CMake tools are optional, not usually required for Regedited
+
+After installing, close and reopen the shell.
+
+STEP 4 - Clone or enter the repo
+
+If cloning:
+
+git clone https://github.com/CommanderTurtle/regedited
+cd regedited
+
+If already downloaded:
+
+cd path\to\regedited
+
+STEP 5 - Fetch dependencies and run tests
+
+cargo test
+
+Expected shape:
+
+test result: ok
+
+Regedited currently has unit tests and doc-tests. Clipboard doc-tests may be
+ignored intentionally because clipboard state is global and OS-specific.
+
+STEP 6 - Build the release binary
+
+cargo build --release
+
+Expected output shape:
+
+Finished `release` profile [optimized] target(s) in ...
+
+Built binary:
+
+Windows:
+target\release\regedited.exe
+
+Linux/macOS:
+target/release/regedited
+
+STEP 7 - Verify the binary
+
+Windows PowerShell:
+
+.\target\release\regedited.exe --version
+.\target\release\regedited.exe --help
+
+Bash:
+
+./target/release/regedited --version
+./target/release/regedited --help
+
+Expected version shape:
+
+regedited 0.2.0
+
+STEP 8 - Run a tiny test document
+
+Windows PowerShell:
+
+$DOC = ".\test.md"
+@'
+random text regedited open random text
+index: 1
+0x0000008 : 0x0000008 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+test label
+test notes
+test reference
+---
+hello from regedited
+'@ | Set-Content -LiteralPath $DOC -Encoding UTF8
+.\target\release\regedited.exe list $DOC
+.\target\release\regedited.exe ref-get $DOC index:1:string:1
+.\target\release\regedited.exe ref-get $DOC index:1:zone:1
+
+Bash:
+
+DOC=./test.md
+cat > "$DOC" <<'EOF'
+random text regedited open random text
+index: 1
+0x0000008 : 0x0000008 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+test label
+test notes
+test reference
+---
+hello from regedited
+EOF
+./target/release/regedited list "$DOC"
+./target/release/regedited ref-get "$DOC" index:1:string:1
+./target/release/regedited ref-get "$DOC" index:1:zone:1
+
+STEP 9 - Optional: install the binary into Cargo's bin folder
+
+This makes regedited available from any shell if %USERPROFILE%\.cargo\bin or
+~/.cargo/bin is on PATH. (Or sysdm.cpl environment PATH add \release
+
+cargo install --path .
+
+Then test:
+
+regedited --version
+regedited --help
+
+STEP 10 - Optional: copy only the built binary somewhere stable
+
+Windows example:
+
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\bin" | Out-Null
+Copy-Item .\target\release\regedited.exe "$env:USERPROFILE\bin\regedited.exe" -Force
+
+Then add this folder to PATH:
+
+%USERPROFILE%\bin
+
+STEP 11 - Updating later
+
+git pull
+rustup update
+cargo test
+cargo build --release
+
+STEP 12 - Cleaning build output
+
+cargo clean
+
+This removes target/, which can become large.
+
+COMMON FIRST-TIME ERRORS
+
+Problem:
+cargo is not recognized
+
+Fix:
+Close and reopen the shell. Confirm ~/.cargo/bin or %USERPROFILE%\.cargo\bin
+is on PATH.
+
+Problem:
+linker link.exe not found
+
+Fix:
+Install Visual Studio Build Tools with Desktop development with C++.
+
+Problem:
+Running target\release\regedited.exe in PowerShell says the command was not found
+
+Fix:
+Use the explicit current-directory prefix:
+
+.\target\release\regedited.exe --version
+
+Problem:
+PowerShell treats > or >= strangely
+
+Fix:
+Quote comparison operators:
+
+.\target\release\regedited.exe ref-bool .\smoke.md index:1:db:7 '>' 6 --then-val yes --else-val no
+
+Problem:
+The trigger line name does not resolve
+
+Fix:
+That is expected. regedited open is only a literal trigger. The address is the
+following numeric index line. Use index:<N>.
+
+Example:
+
+random prefix regedited open random suffix
+index: 42
+
+The address is:
+
+index:42
+
+Not:
+
+random suffix
+or any text after regedited open
+
+WHERE TO READ NEXT
+
+docs\shell\POWERSHELL.txt
+docs\shell\BASH.txt
+docs\shell\PYTHON.txt
+docs\ARCHITECTURE.md
