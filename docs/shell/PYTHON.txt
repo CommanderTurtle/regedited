@@ -1,0 +1,402 @@
+REGEDITED PYTHON INTERACTIVE REFERENCE
+
+This is plain text on purpose. It assumes you are sitting in a Python REPL or running a Python script.
+Python should call the Regedited binary as a process. The binary remains the source of truth.
+For clipboard, prefer native ref-get ... --clip when possible. If you need a pipe, send stdout to clip.exe, wl-copy, or xclip.
+
+Core rule:
+Canonical index openers are any line containing the exact lowercase byte phrase regedited open.
+Nothing before or after that phrase is parsed. The following index: line is the identity.
+Use index:<N> in commands. Human labels belong in string 1, 2, or 3.
+
+Slot rules:
+ref-* commands use 1-based slots:
+  index:5:string:1 through index:5:string:3
+  index:5:db:1 through index:5:db:9
+  index:5:zone:1 through index:5:zone:3
+  index:5:zonehex:1 through index:5:zonehex:3
+
+Older section commands use 0-based slots:
+  set-str FILE SECTION 0 through 2
+  set-num FILE SECTION 0 through 8
+  clip FILE SECTION 0 through 2
+  clip-db FILE SECTION 0 through 8
+  grep FILE SECTION 0 through 2
+  zone-extract FILE SECTION 0 through 2
+
+Python setup:
+
+from pathlib import Path
+import json
+import os
+import subprocess
+import sys
+
+REG = Path("target/release/regedited.exe")
+DOC = Path("regedited-playground.md")
+
+# If regedited is on PATH instead:
+# REG = "regedited"
+
+def run(*args, input_text=None, check=True):
+    proc = subprocess.run(
+        [str(REG), *[str(a) for a in args]],
+        input=input_text,
+        text=True,
+        capture_output=True,
+    )
+    if check and proc.returncode != 0:
+        raise RuntimeError(
+            "command failed\n"
+            + "args: "
+            + repr([str(REG), *[str(a) for a in args]])
+            + "\nstdout:\n"
+            + proc.stdout
+            + "\nstderr:\n"
+            + proc.stderr
+        )
+    return proc.stdout.rstrip("\n")
+
+def run_proc(*args, input_text=None):
+    return subprocess.run(
+        [str(REG), *[str(a) for a in args]],
+        input=input_text,
+        text=True,
+        capture_output=True,
+    )
+
+def copy_with_clip_exe(text):
+    subprocess.run(["clip.exe"], input=text, text=True, check=True)
+
+Create a sample canonical document:
+
+DOC.write_text("""intro line outside any index
+wdfkbsdfknwdbfkwbfkbwekfbwekfbregedited openwjfjbwdkjfbwjnfbwjnf
+index: 5
+0x0000009 : 0x000000A : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+1 | 2 | 3 | 4 | 5 | 6 | 9 | 8 | 10
+Index five label
+Index five notes
+Index five reference
+---
+index five zone line alpha
+index five zone line beta
+prefix-regedited open-suffix-is-ignored
+index: 6
+0x0000013 : 0x0000014 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+Index six label
+Index six notes
+Index six reference
+---
+index six zone line alpha
+index six zone line beta
+garbage before regedited open garbage after
+index: 38
+0x000001D : 0x000001E : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+11 | 22 | 33 | 44 | 55 | 66 | 77 | 88 | 99
+Index thirty-eight label
+Index thirty-eight notes
+Index thirty-eight reference
+---
+index thirty-eight multiline value A
+index thirty-eight multiline value B
+regedited open
+index: 869
+0x0000027 : 0x0000028 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+1 | 2 | 3 | 4 | 5 | 300 | 7 | 8 | 9
+Index eight-six-nine label
+Index eight-six-nine notes
+Index eight-six-nine reference
+---
+index eight-six-nine zone line alpha
+index eight-six-nine zone line beta
+""", encoding="utf-8")
+
+Basic enumeration and inspection:
+
+print(run("list", DOC))
+print(run("scan", DOC))
+print(run("summary", DOC))
+print(run("info", DOC))
+print(run("state", DOC))
+print(run("index-str-list", DOC, 38))
+print(run("db", DOC, "index:38"))
+print(run("hexline", DOC, "index:38"))
+print(run("content", DOC, "index:38"))
+print(run("zone-info", DOC, "index:38", 0))
+print(run("zone-info", DOC, "index:38", 1))
+print(run("zone-info", DOC, "index:38", 2))
+
+Ref grammar accepted by ref-get, ref-set, ref-copy, ref-diff, and ref-bool:
+
+index:38:string:1
+index:38:str:1
+index:38:db:7
+index:38:num:7
+index:38:number:7
+index:38:dbline
+index:38:hexline
+index:38:hex-word-line
+index:38:hex_word_line
+index:38:ascii
+index:38:ranges
+index:38:zone:1
+index:38:range:1
+index:38:defined:1
+index:38:zonehex:1
+index:38:rangehex:1
+index:38:defhex:1
+index:38:definedhex:1
+hex:0x000001D..0x000001E
+hex:0x000001D : 0x000001E
+hex:0x000001D,0x000001E
+0x000001D
+text:literal value
+literal:literal value
+
+Print specific values:
+
+print(run("ref-get", DOC, "index:38:string:1"))
+print(run("ref-get", DOC, "index:38:string:2"))
+print(run("ref-get", DOC, "index:38:string:3"))
+print(run("ref-get", DOC, "index:38:db:7"))
+print(run("ref-get", DOC, "index:38:dbline"))
+print(run("ref-get", DOC, "index:38:hexline"))
+print(run("ref-get", DOC, "index:38:zonehex:1"))
+print(run("ref-get", DOC, "index:38:zone:1"))
+print(run("ref-get", DOC, "hex:0x000001D..0x000001E"))
+print(run("ref-get", DOC, "hex:0x000001D : 0x000001E"))
+print(run("ref-get", DOC, "hex:0x000001D,0x000001E"))
+print(run("ref-get", DOC, "0x000001D"))
+
+Clipboard routes:
+
+# Best native route: ref-get copies the resolved value directly.
+print(run("ref-get", DOC, "index:38:string:1", "--clip"))
+print(run("ref-get", DOC, "index:38:dbline", "--clip"))
+print(run("ref-get", DOC, "index:38:hexline", "--clip"))
+print(run("ref-get", DOC, "index:38:zonehex:1", "--clip"))
+print(run("ref-get", DOC, "index:38:zone:1", "--clip"))
+print(run("ref-get", DOC, "hex:0x000001D..0x000001E", "--clip"))
+print(run("ref-get", DOC, "0x000001D", "--clip"))
+
+# Pipe value to Windows clipboard from Python.
+zone_value = run("ref-get", DOC, "index:38:zone:1")
+copy_with_clip_exe(zone_value)
+
+defined_hex_range = run("ref-get", DOC, "index:38:zonehex:1")
+copy_with_clip_exe(defined_hex_range)
+
+explicit_hex_content = run("ref-get", DOC, "hex:0x000001D..0x000001E")
+copy_with_clip_exe(explicit_hex_content)
+
+# Linux desktop alternatives.
+# subprocess.run(["wl-copy"], input=zone_value, text=True, check=True)
+# subprocess.run(["xclip", "-selection", "clipboard"], input=zone_value, text=True, check=True)
+
+# Legacy clipboard commands. These use section keys and zero-based slots.
+print(run("clip", DOC, "index:38", 0))
+print(run("clip-zone", DOC, "index:38", 0))
+print(run("clip-db", DOC, "index:38", 6))
+print(run("clip-dbline", DOC, "index:38"))
+print(run("clip-hexline", DOC, "index:38"))
+
+# Generate a hex-word pair from normal line numbers and copy that pair.
+# This copies the text 0x000001D : 0x000001E, not the content at those lines.
+print(run("clip-hexword", 29, 30, "--zone-type", "markdown"))
+print(run("clip-hexword", 29, 30, "--zone-type", "code"))
+print(run("clip-hexword", 29, 30, "--zone-type", "media"))
+print(run("clip-hexword", 29, 30, "--zone-type", "database"))
+
+Boolean checks:
+
+# Your direct example: if index 5's 7th DB value is greater than 8, print yes/no.
+print(run("ref-bool", DOC, "index:5:db:7", "gt", "8", "--then-val", "yes", "--else-val", "no"))
+
+# Equivalent spellings.
+print(run("ref-bool", DOC, "index:5:db:7", ">", "8", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:5:db:7", "gte", "9", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:5:db:7", ">=", "9", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:5:db:7", "lt", "10", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:5:db:7", "<", "10", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:5:db:7", "lte", "9", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:5:db:7", "<=", "9", "--then-val", "yes", "--else-val", "no"))
+
+# Your comparative example: if index 6's 3rd DB value equals index 869's 6th DB value.
+print(run("ref-bool", DOC, "index:6:db:3", "eq", "index:869:db:6", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:6:db:3", "==", "index:869:db:6", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:6:db:3", "=", "index:869:db:6", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:6:db:3", "ne", "index:869:db:6", "--then-val", "different", "--else-val", "same"))
+
+# String/zone content checks.
+print(run("ref-bool", DOC, "index:38:string:1", "contains", "thirty-eight", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:38:zone:1", "contains", "multiline", "--then-val", "yes", "--else-val", "no"))
+print(run("ref-bool", DOC, "index:38:zonehex:1", "contains", "0x000001D", "--then-val", "yes", "--else-val", "no"))
+
+Writes through ref-set:
+
+print(run("ref-set", DOC, "index:38:string:2", "--text", "updated notes from Python"))
+print(run("ref-get", DOC, "index:38:string:2"))
+
+print(run("ref-set", DOC, "index:38:db:7", "--text", "123"))
+print(run("ref-get", DOC, "index:38:db:7"))
+
+print(run("ref-set", DOC, "index:38:string:3", "--from", "index:869:string:1"))
+print(run("ref-get", DOC, "index:38:string:3"))
+
+print(run("ref-set", DOC, "index:38:zone:1", "--append", input_text="appended line from stdin\n"))
+print(run("ref-get", DOC, "index:38:zone:1"))
+
+print(run("ref-set", DOC, "index:38:zone:1", input_text="replacement multiline A\nreplacement multiline B\n"))
+print(run("ref-get", DOC, "index:38:zone:1"))
+
+# Set a defined zone's stored hex range without replacing content.
+print(run("ref-set", DOC, "index:38:zonehex:1", "--text", "0x000001D : 0x000001E"))
+print(run("index-zone-set-hex", DOC, 38, 1, "0x000001D", "0x000001E"))
+
+Copy/move/diff refs:
+
+print(run("ref-copy", DOC, "index:869:string:1", "index:38:string:1"))
+print(run("ref-copy", DOC, "index:869:zone:1", "index:38:zone:1"))
+print(run("ref-copy", DOC, "index:869:zone:1", "index:38:zone:1", "--append"))
+print(run("ref-copy", DOC, "index:869:zone:1", "index:38:zone:1", "--move"))
+print(run("ref-diff", DOC, "index:6:dbline", "index:869:dbline"))
+print(run("ref-diff", DOC, "index:38:zone:1", "index:869:zone:1"))
+
+Undo and state snapshots:
+
+Path("state-before.json").write_text(run("state", DOC), encoding="utf-8")
+print(run("ref-set", DOC, "index:38:string:1", "--text", "temporary edit"))
+print(run("state-compare", DOC, "state-before.json"))
+print(run("undo", DOC))
+print(run("ref-get", DOC, "index:38:string:1"))
+
+Explicit hex range commands:
+
+print(run("convert", 29, 30, "--zone-type", "markdown"))
+print(run("convert", 29, 30, "--zone-type", "code"))
+print(run("hex-extract", DOC, "0x000001D", "0x000001E"))
+print(run("hex-replace", DOC, "0x000001D", "0x000001E", input_text="new explicit range text\n"))
+print(run("undo", DOC))
+
+Index-zone helper commands:
+
+print(run("index-zone-extract", DOC, 38, 0))
+print(run("index-zone-replace", DOC, 38, 0, "--text", "zone replacement by index helper"))
+print(run("undo", DOC))
+print(run("index-zone-copy", DOC, "--from-index", 869, "--from-zone", 0, "--to-index", 38, "--to-zone", 0))
+print(run("undo", DOC))
+print(run("index-zone-transfer", "--from-file", DOC, "--from-index", 869, "--from-zone", 0, "--to-file", DOC, "--to-index", 38, "--to-zone", 0))
+print(run("undo", DOC))
+
+Legacy section helper commands:
+
+print(run("set-str", DOC, "index:38", 0, "legacy string zero"))
+print(run("set-num", DOC, "index:38", 6, 777))
+print(run("set-zone", DOC, "index:38", 0, 29, 30, "--zone-type", "markdown"))
+print(run("grep", DOC, "index:38", 0))
+print(run("zone-extract", DOC, "index:38", 0))
+print(run("zone-replace", DOC, "index:38", 0, "--text", "legacy zone replacement"))
+print(run("undo", DOC))
+print(run("zone-append", DOC, "index:38", 0, "--text", "legacy append"))
+print(run("undo", DOC))
+print(run("zone-copy", DOC, "index:869", 0, "index:38", 0))
+print(run("undo", DOC))
+
+Search and old boolean helpers:
+
+print(run("fgrep", DOC, "thirty-eight"))
+print(run("fgrep", DOC, "zone", "--section", "index:38"))
+print(run("fgrep-multi", DOC, "thirty-eight", "eight-six-nine"))
+print(run("lines", DOC, 29, 30))
+print(run("bool-and", DOC, "index:38", "multiline", "value"))
+print(run("bool-or", DOC, "index:38", "missing", "multiline"))
+print(run("bool-xor", DOC, "index:38", "multiline", "eight-six-nine"))
+print(run("bool-nand", DOC, "index:38", "multiline", "forbidden"))
+print(run("if-contains", DOC, "index:38", "multiline", "--then-val", "yes", "--else-val", "no"))
+print(run("count", DOC, "__all__", "index"))
+
+Create/copy/replace documents:
+
+print(run("new", "new-doc.md", "New Regedited Document"))
+print(run("add", "new-doc.md", "LegacyNamedSection"))
+print(run("rm", "new-doc.md", "LegacyNamedSection"))
+Path("donor.md").write_text(DOC.read_text(encoding="utf-8"), encoding="utf-8")
+print(run("diff", DOC, "donor.md"))
+print(run("replace", DOC, "donor.md", "--output", "replaced-output.md"))
+print(run("replace", DOC, "donor.md", "--sections", "index:38", "--output", "replaced-index38.md"))
+
+WAL, transactions, schema:
+
+print(run("wal", DOC))
+print(run("wal-replay", DOC))
+print(run("wal-replay", DOC, "--apply"))
+print(run("tx", "status", DOC))
+print(run("tx", "begin", DOC))
+print(run("tx", "commit", DOC))
+print(run("tx", "rollback", DOC))
+print(run("schema", DOC))
+print(run("schema", DOC, "--init"))
+print(run("schema", DOC, "--validate"))
+
+Utility commands:
+
+print(run("types"))
+print(run("reg-types"))
+print(run("reg-parse", "hello", "--reg-type", "REG_SZ"))
+print(run("reg-parse", 123, "--reg-type", "REG_DWORD"))
+print(run("getutf", 29))
+print(run("getutf", 0, "--decode", "1D 00"))
+print(run("encap", "hello world", "--mode", "b"))
+print(run("encap", "hello world", "--mode", "c"))
+print(run("encap", "hello world", "--mode", "d"))
+print(run("encap", "[\"hello\"]", "--extract"))
+print(run("encap", "hello world", "--mode", "b", "--to", "d"))
+print(run("encap", "hello world", "--set", "0aaa"))
+print(run("echo", DOC, "index:38", 0))
+print(run("echo-direct", "literal string with < > & | characters"))
+
+HTML attribute extraction:
+
+Path("sample.html").write_text("""<a href="/one">one</a>
+<img src="/img.png">
+<script src="/app.js"></script>
+""", encoding="utf-8")
+
+print(run("grab-html", "sample.html", "href"))
+print(run("grab-html", "sample.html", "src"))
+print(run("grab-html", "sample.html", "src", "--tag", "img"))
+print(run("grab-html", "sample.html", "href", "--mode", "d", "--set", "0link"))
+print(run("grab-html", "sample.html", "src", "--numbered"))
+
+HTTP serve mode:
+
+# Start in a terminal:
+# regedited serve --file regedited-playground.md --port 5000
+
+# Query from Python:
+import urllib.request
+print(urllib.request.urlopen("http://127.0.0.1:5000/").read().decode())
+print(urllib.request.urlopen("http://127.0.0.1:5000/sections").read().decode())
+print(urllib.request.urlopen("http://127.0.0.1:5000/section/index:38/hexline").read().decode())
+print(urllib.request.urlopen("http://127.0.0.1:5000/ref?spec=index:38:zonehex:1").read().decode())
+print(urllib.request.urlopen("http://127.0.0.1:5000/ref-bool?left=index:5:db:7&op=gt&right=8").read().decode())
+
+query = json.dumps({"left": "index:6:db:3", "op": "eq", "right": "index:869:db:6"}).encode()
+req = urllib.request.Request("http://127.0.0.1:5000/query", data=query, headers={"Content-Type": "application/json"}, method="POST")
+print(urllib.request.urlopen(req).read().decode())
+
+Branching pattern for scripts:
+
+decision = run("ref-bool", DOC, "index:5:db:7", "gt", "8", "--then-val", "yes", "--else-val", "no")
+if decision == "yes":
+    print("branch true")
+else:
+    print("branch false")
+
+value = run("ref-get", DOC, "index:38:zone:1")
+print(value)
+
+hex_range = run("ref-get", DOC, "index:38:zonehex:1")
+print("defined hex range:", hex_range)

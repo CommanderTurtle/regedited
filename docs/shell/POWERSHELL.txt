@@ -1,0 +1,365 @@
+REGEDITED POWERSHELL INTERACTIVE REFERENCE
+
+This is plain text on purpose. It assumes you are sitting in an interactive PowerShell shell.
+PowerShell is the most quoting-sensitive of the three shells here. Prefer single quotes around ref specs and operators like '>' or '>='.
+The native Regedited clipboard route is usually simplest: ref-get ... --clip.
+PowerShell's own clipboard route is: ... | Set-Clipboard.
+
+Core rule:
+Canonical index openers are any line containing the exact lowercase byte phrase regedited open.
+Nothing before or after that phrase is parsed. The following index: line is the identity.
+Use index:<N> in commands. Human labels belong in string 1, 2, or 3.
+
+Slot rules:
+ref-* commands use 1-based slots:
+  index:5:string:1 through index:5:string:3
+  index:5:db:1 through index:5:db:9
+  index:5:zone:1 through index:5:zone:3
+  index:5:zonehex:1 through index:5:zonehex:3
+
+Older section commands use 0-based slots:
+  set-str FILE SECTION 0 through 2
+  set-num FILE SECTION 0 through 8
+  clip FILE SECTION 0 through 2
+  clip-db FILE SECTION 0 through 8
+  grep FILE SECTION 0 through 2
+  zone-extract FILE SECTION 0 through 2
+
+Recommended executable setup:
+
+$REG = ".\target\release\regedited.exe"
+$DOC = ".\regedited-playground.md"
+
+# If regedited is on PATH instead:
+# $REG = "regedited"
+
+Create a sample canonical document:
+
+@'
+intro line outside any index
+wdfkbsdfknwdbfkwbfkbwekfbwekfbregedited openwjfjbwdkjfbwjnfbwjnf
+index: 5
+0x0000009 : 0x000000A : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+1 | 2 | 3 | 4 | 5 | 6 | 9 | 8 | 10
+Index five label
+Index five notes
+Index five reference
+---
+index five zone line alpha
+index five zone line beta
+prefix-regedited open-suffix-is-ignored
+index: 6
+0x0000013 : 0x0000014 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+Index six label
+Index six notes
+Index six reference
+---
+index six zone line alpha
+index six zone line beta
+garbage before regedited open garbage after
+index: 38
+0x000001D : 0x000001E : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+11 | 22 | 33 | 44 | 55 | 66 | 77 | 88 | 99
+Index thirty-eight label
+Index thirty-eight notes
+Index thirty-eight reference
+---
+index thirty-eight multiline value A
+index thirty-eight multiline value B
+regedited open
+index: 869
+0x0000027 : 0x0000028 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+1 | 2 | 3 | 4 | 5 | 300 | 7 | 8 | 9
+Index eight-six-nine label
+Index eight-six-nine notes
+Index eight-six-nine reference
+---
+index eight-six-nine zone line alpha
+index eight-six-nine zone line beta
+'@ | Set-Content -LiteralPath $DOC -Encoding UTF8
+
+Basic enumeration and inspection:
+
+& $REG list $DOC
+& $REG scan $DOC
+& $REG summary $DOC
+& $REG info $DOC
+& $REG state $DOC
+& $REG index-str-list $DOC 38
+& $REG db $DOC 'index:38'
+& $REG hexline $DOC 'index:38'
+& $REG content $DOC 'index:38'
+& $REG zone-info $DOC 'index:38' 0
+& $REG zone-info $DOC 'index:38' 1
+& $REG zone-info $DOC 'index:38' 2
+
+Ref grammar accepted by ref-get, ref-set, ref-copy, ref-diff, and ref-bool:
+
+index:38:string:1
+index:38:str:1
+index:38:db:7
+index:38:num:7
+index:38:number:7
+index:38:dbline
+index:38:hexline
+index:38:hex-word-line
+index:38:hex_word_line
+index:38:ascii
+index:38:ranges
+index:38:zone:1
+index:38:range:1
+index:38:defined:1
+index:38:zonehex:1
+index:38:rangehex:1
+index:38:defhex:1
+index:38:definedhex:1
+hex:0x000001D..0x000001E
+hex:0x000001D : 0x000001E
+hex:0x000001D,0x000001E
+0x000001D
+text:literal value
+literal:literal value
+
+Print specific values:
+
+& $REG ref-get $DOC 'index:38:string:1'
+& $REG ref-get $DOC 'index:38:string:2'
+& $REG ref-get $DOC 'index:38:string:3'
+& $REG ref-get $DOC 'index:38:db:7'
+& $REG ref-get $DOC 'index:38:dbline'
+& $REG ref-get $DOC 'index:38:hexline'
+& $REG ref-get $DOC 'index:38:zonehex:1'
+& $REG ref-get $DOC 'index:38:zone:1'
+& $REG ref-get $DOC 'hex:0x000001D..0x000001E'
+& $REG ref-get $DOC 'hex:0x000001D : 0x000001E'
+& $REG ref-get $DOC 'hex:0x000001D,0x000001E'
+& $REG ref-get $DOC '0x000001D'
+
+Clipboard routes:
+
+# Best native route: ref-get copies the resolved value directly.
+& $REG ref-get $DOC 'index:38:string:1' --clip
+& $REG ref-get $DOC 'index:38:dbline' --clip
+& $REG ref-get $DOC 'index:38:hexline' --clip
+& $REG ref-get $DOC 'index:38:zonehex:1' --clip
+& $REG ref-get $DOC 'index:38:zone:1' --clip
+& $REG ref-get $DOC 'hex:0x000001D..0x000001E' --clip
+& $REG ref-get $DOC '0x000001D' --clip
+
+# PowerShell clipboard pipe.
+& $REG ref-get $DOC 'index:38:zone:1' | Set-Clipboard
+& $REG ref-get $DOC 'index:38:zonehex:1' | Set-Clipboard
+& $REG ref-get $DOC 'hex:0x000001D..0x000001E' | Set-Clipboard
+& $REG hex-extract $DOC 0x000001D 0x000001E | Set-Clipboard
+
+# Legacy clipboard commands. These use section keys and zero-based slots.
+& $REG clip $DOC 'index:38' 0
+& $REG clip-zone $DOC 'index:38' 0
+& $REG clip-db $DOC 'index:38' 6
+& $REG clip-dbline $DOC 'index:38'
+& $REG clip-hexline $DOC 'index:38'
+
+# Generate a hex-word pair from normal line numbers and copy that pair.
+# This copies the text 0x000001D : 0x000001E, not the content at those lines.
+& $REG clip-hexword 29 30 --zone-type markdown
+& $REG clip-hexword 29 30 --zone-type code
+& $REG clip-hexword 29 30 --zone-type media
+& $REG clip-hexword 29 30 --zone-type database
+
+Boolean checks:
+
+# Your direct example: if index 5's 7th DB value is greater than 8, print yes/no.
+& $REG ref-bool $DOC 'index:5:db:7' gt 8 --then-val yes --else-val no
+
+# Equivalent spellings. Quote > and >= in PowerShell.
+& $REG ref-bool $DOC 'index:5:db:7' '>' 8 --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:5:db:7' gte 9 --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:5:db:7' '>=' 9 --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:5:db:7' lt 10 --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:5:db:7' '<' 10 --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:5:db:7' lte 9 --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:5:db:7' '<=' 9 --then-val yes --else-val no
+
+# Your comparative example: if index 6's 3rd DB value equals index 869's 6th DB value.
+& $REG ref-bool $DOC 'index:6:db:3' eq 'index:869:db:6' --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:6:db:3' '==' 'index:869:db:6' --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:6:db:3' '=' 'index:869:db:6' --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:6:db:3' ne 'index:869:db:6' --then-val different --else-val same
+
+# String/zone content checks.
+& $REG ref-bool $DOC 'index:38:string:1' contains thirty-eight --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:38:zone:1' contains multiline --then-val yes --else-val no
+& $REG ref-bool $DOC 'index:38:zonehex:1' contains 0x000001D --then-val yes --else-val no
+
+Writes through ref-set:
+
+& $REG ref-set $DOC 'index:38:string:2' --text 'updated notes from PowerShell'
+& $REG ref-get $DOC 'index:38:string:2'
+
+& $REG ref-set $DOC 'index:38:db:7' --text 123
+& $REG ref-get $DOC 'index:38:db:7'
+
+& $REG ref-set $DOC 'index:38:string:3' --from 'index:869:string:1'
+& $REG ref-get $DOC 'index:38:string:3'
+
+@'
+appended line from stdin
+'@ | & $REG ref-set $DOC 'index:38:zone:1' --append
+& $REG ref-get $DOC 'index:38:zone:1'
+
+@'
+replacement multiline A
+replacement multiline B
+'@ | & $REG ref-set $DOC 'index:38:zone:1'
+& $REG ref-get $DOC 'index:38:zone:1'
+
+# Set a defined zone's stored hex range without replacing content.
+& $REG ref-set $DOC 'index:38:zonehex:1' --text '0x000001D : 0x000001E'
+& $REG index-zone-set-hex $DOC 38 1 0x000001D 0x000001E
+
+Copy/move/diff refs:
+
+& $REG ref-copy $DOC 'index:869:string:1' 'index:38:string:1'
+& $REG ref-copy $DOC 'index:869:zone:1' 'index:38:zone:1'
+& $REG ref-copy $DOC 'index:869:zone:1' 'index:38:zone:1' --append
+& $REG ref-copy $DOC 'index:869:zone:1' 'index:38:zone:1' --move
+& $REG ref-diff $DOC 'index:6:dbline' 'index:869:dbline'
+& $REG ref-diff $DOC 'index:38:zone:1' 'index:869:zone:1'
+
+Undo and state snapshots:
+
+& $REG state $DOC | Set-Content -LiteralPath .\state-before.json -Encoding UTF8
+& $REG ref-set $DOC 'index:38:string:1' --text 'temporary edit'
+& $REG state-compare $DOC .\state-before.json
+& $REG undo $DOC
+& $REG ref-get $DOC 'index:38:string:1'
+
+Explicit hex range commands:
+
+& $REG convert 29 30 --zone-type markdown
+& $REG convert 29 30 --zone-type code
+& $REG hex-extract $DOC 0x000001D 0x000001E
+@'
+new explicit range text
+'@ | & $REG hex-replace $DOC 0x000001D 0x000001E
+& $REG undo $DOC
+
+Index-zone helper commands:
+
+& $REG index-zone-extract $DOC 38 0
+& $REG index-zone-replace $DOC 38 0 --text 'zone replacement by index helper'
+& $REG undo $DOC
+& $REG index-zone-copy $DOC --from-index 869 --from-zone 0 --to-index 38 --to-zone 0
+& $REG undo $DOC
+& $REG index-zone-transfer --from-file $DOC --from-index 869 --from-zone 0 --to-file $DOC --to-index 38 --to-zone 0
+& $REG undo $DOC
+
+Legacy section helper commands:
+
+& $REG set-str $DOC 'index:38' 0 'legacy string zero'
+& $REG set-num $DOC 'index:38' 6 777
+& $REG set-zone $DOC 'index:38' 0 29 30 --zone-type markdown
+& $REG grep $DOC 'index:38' 0
+& $REG zone-extract $DOC 'index:38' 0
+& $REG zone-replace $DOC 'index:38' 0 --text 'legacy zone replacement'
+& $REG undo $DOC
+& $REG zone-append $DOC 'index:38' 0 --text 'legacy append'
+& $REG undo $DOC
+& $REG zone-copy $DOC 'index:869' 0 'index:38' 0
+& $REG undo $DOC
+
+Search and old boolean helpers:
+
+& $REG fgrep $DOC 'thirty-eight'
+& $REG fgrep $DOC 'zone' --section 'index:38'
+& $REG fgrep-multi $DOC 'thirty-eight' 'eight-six-nine'
+& $REG lines $DOC 29 30
+& $REG bool-and $DOC 'index:38' 'multiline' 'value'
+& $REG bool-or $DOC 'index:38' 'missing' 'multiline'
+& $REG bool-xor $DOC 'index:38' 'multiline' 'eight-six-nine'
+& $REG bool-nand $DOC 'index:38' 'multiline' 'forbidden'
+& $REG if-contains $DOC 'index:38' 'multiline' --then-val yes --else-val no
+& $REG count $DOC '__all__' 'index'
+
+Create/copy/replace documents:
+
+& $REG new .\new-doc.md 'New Regedited Document'
+& $REG add .\new-doc.md 'LegacyNamedSection'
+& $REG rm .\new-doc.md 'LegacyNamedSection'
+Copy-Item -LiteralPath $DOC -Destination .\donor.md -Force
+& $REG diff $DOC .\donor.md
+& $REG replace $DOC .\donor.md --output .\replaced-output.md
+& $REG replace $DOC .\donor.md --sections 'index:38' --output .\replaced-index38.md
+
+WAL, transactions, schema:
+
+& $REG wal $DOC
+& $REG wal-replay $DOC
+& $REG wal-replay $DOC --apply
+& $REG tx status $DOC
+& $REG tx begin $DOC
+& $REG tx commit $DOC
+& $REG tx rollback $DOC
+& $REG schema $DOC
+& $REG schema $DOC --init
+& $REG schema $DOC --validate
+
+Utility commands:
+
+& $REG types
+& $REG reg-types
+& $REG reg-parse 'hello' --reg-type REG_SZ
+& $REG reg-parse 123 --reg-type REG_DWORD
+& $REG getutf 29
+& $REG getutf 0 --decode '1D 00'
+& $REG encap 'hello world' --mode b
+& $REG encap 'hello world' --mode c
+& $REG encap 'hello world' --mode d
+& $REG encap '["hello"]' --extract
+& $REG encap 'hello world' --mode b --to d
+& $REG encap 'hello world' --set 0aaa
+& $REG echo $DOC 'index:38' 0
+& $REG echo-direct 'literal string with < > & | characters'
+
+HTML attribute extraction:
+
+@'
+<a href="/one">one</a>
+<img src="/img.png">
+<script src="/app.js"></script>
+'@ | Set-Content -LiteralPath .\sample.html -Encoding UTF8
+
+& $REG grab-html .\sample.html href
+& $REG grab-html .\sample.html src
+& $REG grab-html .\sample.html src --tag img
+& $REG grab-html .\sample.html href --mode d --set 0link
+& $REG grab-html .\sample.html src --numbered
+
+HTTP serve mode:
+
+& $REG serve --file $DOC --port 5000
+
+# In another PowerShell:
+Invoke-RestMethod 'http://127.0.0.1:5000/'
+Invoke-RestMethod 'http://127.0.0.1:5000/sections'
+Invoke-RestMethod 'http://127.0.0.1:5000/section/index:38/hexline'
+Invoke-RestMethod 'http://127.0.0.1:5000/ref?spec=index:38:zonehex:1'
+Invoke-RestMethod 'http://127.0.0.1:5000/ref-bool?left=index:5:db:7&op=gt&right=8'
+$body = @{ left='index:6:db:3'; op='eq'; right='index:869:db:6' } | ConvertTo-Json -Compress
+Invoke-RestMethod 'http://127.0.0.1:5000/query' -Method Post -Body $body -ContentType 'application/json'
+
+Branching pattern for scripts:
+
+$decision = & $REG ref-bool $DOC 'index:5:db:7' gt 8 --then-val yes --else-val no
+if ($decision -eq 'yes') {
+    'branch true'
+} else {
+    'branch false'
+}
+
+$value = & $REG ref-get $DOC 'index:38:zone:1'
+$value
+
+$hexRange = & $REG ref-get $DOC 'index:38:zonehex:1'
+"defined hex range: $hexRange"
