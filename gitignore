@@ -1,0 +1,28 @@
+/target/
+/web/target/
+/web/pkg/
+/.cargo-artifact-lock
+/.cargo-build-lock
+/.cargo-lock
+
+# Local/editor state
+.env
+.env.*
+*.log
+*.tmp
+*.bak
+*.undo
+*.wal
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Windows debug/build byproducts
+*.pdb
+*.ilk
+*.obj
+*.exe
+

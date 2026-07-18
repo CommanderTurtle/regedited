@@ -118,14 +118,12 @@ fn parse_attr_value(line: &str, attr_name: &str) -> Option<String> {
     let after_equals = &after_attr[1..].trim_start();
 
     // Extract quoted or unquoted value
-    if after_equals.starts_with('"') {
+    if let Some(rest) = after_equals.strip_prefix('"') {
         // Double-quoted
-        let rest = &after_equals[1..];
         let end = rest.find('"').unwrap_or(rest.len());
         Some(rest[..end].to_string())
-    } else if after_equals.starts_with('\'') {
+    } else if let Some(rest) = after_equals.strip_prefix('\'') {
         // Single-quoted
-        let rest = &after_equals[1..];
         let end = rest.find('\'').unwrap_or(rest.len());
         Some(rest[..end].to_string())
     } else {

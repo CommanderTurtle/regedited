@@ -357,3 +357,23 @@ printf '%s\n' "$value"
 
 hex_range="$("$REG" ref-get "$DOC" "index:38:zonehex:1")"
 printf 'defined hex range: %s\n' "$hex_range"
+
+RGD COMPACT WORKFLOW
+
+pathadd.sh creates rgd as a symlink to the release regedited executable and
+adds target/release to PATH through the invoking user's .bashrc.
+
+rgd load "$DOC"
+rgd load
+rgd l
+rgd sm
+rgd ist 38
+rgd rg i38s1
+rgd rg i38s1 c
+rgd rb i38db7 gte 8 --then-val TRUE --else-val FALSE
+rgd rd i38s1 i39s1
+rgd cv d 58 p 59
+rgd cv b 10 20 m 30 40 d 50 60 c
+
+Source ~/.bashrc after installation if the script cannot update the parent
+shell process. An explicit path still overrides the loaded document.

@@ -77,7 +77,7 @@
 
 // SPDX-License-Identifier: AGPL-3.0
 
-use clap::{Parser, Subcommand};
+use clap::{error::ErrorKind, CommandFactory, Parser, Subcommand};
 use owo_colors::OwoColorize;
 use regedited::{
     bool_ops::{bool_and, bool_nand, bool_or, bool_xor, count, if_contains},
@@ -88,7 +88,10 @@ use regedited::{
     store::{Store, StoreConfig},
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 #[derive(Parser)]
 #[command(name = "regedited")]
@@ -99,7 +102,7 @@ struct Cli {
     command: Commands,
 
     /// Verbose output
-    #[arg(short, long, global = true)]
+    #[arg(long, global = true)]
     verbose: bool,
 
     /// Don't auto-save changes
@@ -543,15 +546,17 @@ enum Commands {
         zone_type: String,
     },
 
-    /// Convert line range + type to hex-words (interactive converter)
+    /// Convert one to six line numbers to compact hex-words
     Convert {
-        /// Start line
-        start: u32,
-        /// End line
-        end: u32,
-        /// Zone type: markdown, code, media, database (or 0-3)
-        #[arg(short, long, default_value = "markdown")]
+        /// Line numbers plus optional inline p/b/m/d type tokens and clip/c suffix
+        #[arg(value_name = "VALUE", num_args = 1..)]
+        values: Vec<String>,
+        /// Default zone type: markdown, code, media, database (or 0-3)
+        #[arg(short = 't', long, default_value = "markdown")]
         zone_type: String,
+        /// Legacy zone-converter marker (inline p/b/m/d tokens remain optional)
+        #[arg(short = 'z', long = "zone")]
+        zone: bool,
     },
 
     /// List all zone types and their hex nibble values
@@ -838,13 +843,307 @@ enum Commands {
     },
 }
 
+const NO_LOADED_PATH: &str = "No path specified yet, specify path, else perform a load first, i.e. `rgd load ~/example/file/location.txt`";
+
 fn main() {
-    let cli = Cli::parse();
+    let result = std::thread::Builder::new()
+        .name("regedited-cli".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(run_main)
+        .unwrap_or_else(|error| {
+            eprintln!("Failed to start Regedited: {}", error);
+            std::process::exit(1);
+        })
+        .join();
+
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+fn run_main() {
+    let mut args: Vec<OsString> = std::env::args_os().collect();
+    let short_mode = args
+        .first()
+        .is_some_and(|argv0| regedited::qol::is_rgd_invocation(argv0));
+    regedited::qol::normalize_global_arguments(&mut args);
+
+    if short_mode {
+        if let Err(error) = regedited::qol::validate_aliases() {
+            clap::Error::raw(ErrorKind::InvalidValue, error).exit();
+        }
+        match handle_loaded_path_command(&args) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => clap::Error::raw(ErrorKind::InvalidValue, error.to_string()).exit(),
+        }
+        regedited::qol::normalize_short_command(&mut args);
+        regedited::qol::normalize_compact_refs(&mut args);
+        regedited::qol::normalize_short_clip_flag(&mut args);
+    }
+
+    if handle_example_request(&args) {
+        return;
+    }
+
+    if handle_help_request(&args, short_mode) {
+        return;
+    }
+
+    let cli = parse_cli(args, short_mode);
 
     if let Err(e) = run(cli) {
         eprintln!("{} {}", "Error:".red().bold(), e);
         std::process::exit(1);
     }
+}
+
+fn handle_example_request(args: &[OsString]) -> bool {
+    let requested = args
+        .get(1)
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value == "-ex" || value == "--examples");
+    if !requested {
+        return false;
+    }
+
+    let values: Vec<&str> = args
+        .iter()
+        .skip(2)
+        .filter_map(|value| value.to_str())
+        .collect();
+    let (script, environment) = match values.as_slice() {
+        [environment] => (false, *environment),
+        ["script", environment] => (true, *environment),
+        _ => clap::Error::raw(
+            ErrorKind::InvalidValue,
+            "Usage: regedited -ex [script] <powershell|repl|python|bash|bat>",
+        )
+        .exit(),
+    };
+
+    let content = match (script, environment.to_ascii_lowercase().as_str()) {
+        (false, "powershell") => include_str!("../docs/shell/POWERSHELL.txt"),
+        (false, "repl") => include_str!("../docs/shell/REPL.txt"),
+        (false, "python") => include_str!("../docs/shell/PYTHON.txt"),
+        (false, "bash") => include_str!("../docs/shell/BASH.txt"),
+        (false, "bat") => include_str!("../docs/shell/BAT.txt"),
+        (true, "powershell") => include_str!("../docs/shell/scripts/POWERSHELL.txt"),
+        (true, "repl") => include_str!("../docs/shell/scripts/REPL.txt"),
+        (true, "python") => include_str!("../docs/shell/scripts/PYTHON.txt"),
+        (true, "bash") => include_str!("../docs/shell/scripts/BASH.txt"),
+        (true, "bat") => include_str!("../docs/shell/scripts/BAT.txt"),
+        _ => clap::Error::raw(
+            ErrorKind::InvalidValue,
+            format!(
+                "unknown example environment '{}'; use powershell, repl, python, bash, or bat",
+                environment
+            ),
+        )
+        .exit(),
+    };
+    print!("{}", content);
+    true
+}
+
+fn handle_loaded_path_command(args: &[OsString]) -> Result<bool, Box<dyn std::error::Error>> {
+    let Some(command) = args.get(1).and_then(|value| value.to_str()) else {
+        return Ok(false);
+    };
+
+    match command {
+        "load" => {
+            if args
+                .iter()
+                .skip(2)
+                .any(|value| matches!(value.to_str(), Some("-h" | "--help" | "-help")))
+            {
+                println!("Usage: rgd load [FILE]");
+                println!("Load FILE as the default document for later rgd commands.");
+                println!("With no FILE, print the currently loaded document.");
+                return Ok(true);
+            }
+            match args.get(2) {
+                Some(path) if args.len() == 3 => {
+                    let path = regedited::qol::save_loaded_path(&PathBuf::from(path))?;
+                    println!("Loaded {}", path.display());
+                }
+                None => match regedited::qol::read_loaded_path()? {
+                    Some(path) => println!("Loaded {}", path.display()),
+                    None => println!("No path loaded."),
+                },
+                _ => return Err("Usage: rgd load [FILE]".into()),
+            }
+            Ok(true)
+        }
+        "unload" | "clear-load" => {
+            if regedited::qol::clear_loaded_path()? {
+                println!("Loaded path cleared.");
+            } else {
+                println!("No path was loaded.");
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn parse_cli(args: Vec<OsString>, short_mode: bool) -> Cli {
+    if !short_mode {
+        return Cli::try_parse_from(args).unwrap_or_else(|error| error.exit());
+    }
+
+    let command = args
+        .get(1)
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let placement = regedited::qol::file_placement(command);
+    if placement == regedited::qol::FilePlacement::None {
+        return Cli::try_parse_from(args).unwrap_or_else(|error| error.exit());
+    }
+
+    let explicit_file = regedited::qol::has_explicit_file(&args, command);
+    let original = Cli::try_parse_from(args.clone());
+    let loaded = regedited::qol::read_loaded_path()
+        .unwrap_or_else(|error| clap::Error::raw(ErrorKind::Io, error.to_string()).exit());
+
+    if let Some(loaded) = loaded {
+        let force_loaded_first =
+            original.is_err() && matches!(command, "diff" | "replace" | "state-compare");
+        if !explicit_file || force_loaded_first {
+            if let Some(with_file) =
+                regedited::qol::inject_loaded_file(&args, command, &loaded, force_loaded_first)
+            {
+                return Cli::try_parse_from(with_file).unwrap_or_else(|error| error.exit());
+            }
+        }
+    } else if !explicit_file {
+        clap::Error::raw(ErrorKind::MissingRequiredArgument, NO_LOADED_PATH).exit();
+    }
+
+    original.unwrap_or_else(|error| error.exit())
+}
+
+fn handle_help_request(args: &[OsString], short_mode: bool) -> bool {
+    let top_level_help = args.len() == 1
+        || args
+            .get(1)
+            .is_some_and(|value| matches!(value.to_str(), Some("-h" | "--help" | "-help")));
+    if top_level_help {
+        print_top_level_help(short_mode);
+        return true;
+    }
+
+    if args.get(1).is_some_and(|value| value == "help") {
+        if let Some(command) = args.get(2).and_then(|value| value.to_str()) {
+            let canonical = if short_mode {
+                regedited::qol::canonical_command(command).unwrap_or(command)
+            } else {
+                command
+            };
+            print_command_help(canonical, short_mode);
+        } else {
+            print_top_level_help(short_mode);
+        }
+        return true;
+    }
+
+    let requested = args
+        .iter()
+        .skip(2)
+        .any(|value| matches!(value.to_str(), Some("-h" | "--help" | "-help")));
+    if requested {
+        if let Some(command) = args.get(1).and_then(|value| value.to_str()) {
+            print_command_help(command, short_mode);
+        } else {
+            print_top_level_help(short_mode);
+        }
+        return true;
+    }
+    false
+}
+
+fn print_top_level_help(short_mode: bool) {
+    let root = Cli::command();
+    let loaded = regedited::qol::read_loaded_path().ok().flatten();
+
+    if short_mode {
+        println!("rgd - concise Regedited command surface");
+        println!("Usage: rgd <COMMAND> [ARGS] [OPTIONS]");
+        println!("Binary: same executable payload as regedited");
+        match loaded {
+            Some(path) => println!("Loaded document: {}", path.display()),
+            None => println!("Loaded document: none (run `rgd load <file>`)"),
+        }
+        println!("\nCommands:");
+    } else {
+        println!("regedited - Fast plaintext parse-ment database");
+        println!("Usage: regedited <COMMAND> [ARGS] [OPTIONS]");
+        println!("\nCommands (each line includes its rgd shorthand and runtime usage):");
+    }
+
+    for alias in regedited::qol::COMMAND_ALIASES {
+        let Some(subcommand) = root.find_subcommand(alias.canonical) else {
+            continue;
+        };
+        let description = subcommand
+            .get_about()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        let mut command = subcommand.clone();
+        command.set_bin_name(format!("regedited {}", alias.canonical));
+        let usage = command.render_usage().to_string().replace("Usage: ", "");
+        if short_mode {
+            println!(
+                "  {:<5} {:<23} {} | {}",
+                alias.short, alias.canonical, description, usage
+            );
+        } else {
+            println!(
+                "  {:<23} [rgd: {:<5}] {} | {}",
+                alias.canonical, alias.short, description, usage
+            );
+        }
+    }
+
+    if short_mode {
+        println!("\nContext: rgd load <FILE> | rgd load | rgd unload");
+        println!("Refs: i38, i38s1, i38db7, i38dbl, i38hl, i38r1, i38zh1");
+    }
+    println!("\nUse `<command> -help` for command-local arguments and flags.");
+    println!("Use `regedited -ex <environment>` for categorized examples.");
+}
+
+fn print_command_help(command_name: &str, short_mode: bool) {
+    let root = Cli::command();
+    let Some(subcommand) = root.find_subcommand(command_name) else {
+        clap::Error::raw(
+            ErrorKind::InvalidSubcommand,
+            format!("unknown command '{}'", command_name),
+        )
+        .exit();
+    };
+
+    let short = regedited::qol::short_command(command_name).unwrap_or(command_name);
+    if short_mode {
+        println!("rgd {} -> regedited {}", short, command_name);
+        if regedited::qol::file_placement(command_name) != regedited::qol::FilePlacement::None {
+            println!("FILE may be omitted after `rgd load <FILE>`.\n");
+        }
+    } else {
+        println!("rgd shorthand: {}\n", short);
+    }
+
+    let mut command = subcommand.clone();
+    command.set_bin_name(if short_mode {
+        format!("rgd {}", short)
+    } else {
+        format!("regedited {}", command_name)
+    });
+    command
+        .print_long_help()
+        .unwrap_or_else(|error| clap::Error::raw(ErrorKind::Io, error.to_string()).exit());
+    println!();
 }
 
 fn cmd_getutf(number: u32, decode: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
@@ -1047,10 +1346,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             zone_type,
         } => cmd_set_zone(&file, &section, index, start, end, &zone_type, config),
         Commands::Convert {
-            start,
-            end,
+            values,
             zone_type,
-        } => cmd_convert(start, end, &zone_type),
+            zone: _,
+        } => cmd_convert(&values, &zone_type),
         Commands::Types => cmd_types(),
         Commands::Content { file, section } => cmd_content(&file, &section, config),
         Commands::Lines { file, start, end } => cmd_lines(&file, start, end),
@@ -1375,31 +1674,12 @@ fn cmd_set_zone(
     Ok(())
 }
 
-fn cmd_convert(
-    start: u32,
-    end: u32,
-    zone_type_str: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let zt = regedited::zone_type::ZoneType::from_name(zone_type_str)
-        .ok_or_else(|| format!("Unknown zone type: '{}'", zone_type_str))?;
-
-    let (start_hex, end_hex) = regedited::zone_type::convert_to_hex_words(start, end, zt);
-
-    println!(
-        "{} Converted range {}-{} [{}]",
-        "Converter:".green().bold(),
-        start.to_string().yellow(),
-        end.to_string().yellow(),
-        zt.name().cyan(),
-    );
-    println!("  Start: {}", start_hex.cyan());
-    println!("  End:   {}", end_hex.cyan());
-    println!("\n  {} Full line:", "Paste into your .md:".dimmed());
-    println!(
-        "  {} : {} : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000",
-        start_hex, end_hex
-    );
-
+fn cmd_convert(values: &[String], zone_type: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let conversion = regedited::converter::parse_conversion(values, zone_type)?;
+    if conversion.clip {
+        regedited::clip::copy_to_clipboard(&conversion.output)?;
+    }
+    println!("{}", conversion.output);
     Ok(())
 }
 
@@ -1568,7 +1848,7 @@ fn cmd_info(file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 // ==================== FAST OPERATIONS (SAFETENSORS-STYLE) ====================
 
 fn cmd_scan(
-    file: &PathBuf,
+    file: &Path,
     filter: Option<String>,
     value: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1623,7 +1903,7 @@ fn cmd_scan(
                     if sec
                         .db_values
                         .get(idx)
-                        .map_or(false, |&v| v >= min && v <= max)
+                        .is_some_and(|&v| v >= min && v <= max)
                     {
                         println!("{}", sec.display_compact());
                     }
@@ -1644,7 +1924,7 @@ fn cmd_scan(
     Ok(())
 }
 
-fn cmd_diff(file_a: &PathBuf, file_b: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_diff(file_a: &Path, file_b: &Path) -> Result<(), Box<dyn std::error::Error>> {
     use regedited::fast_ops::fast_diff;
 
     println!(
@@ -1667,7 +1947,7 @@ fn cmd_diff(file_a: &PathBuf, file_b: &PathBuf) -> Result<(), Box<dyn std::error
 
 fn cmd_replace(
     target: &PathBuf,
-    source: &PathBuf,
+    source: &Path,
     sections: Option<Vec<String>>,
     output: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1695,7 +1975,7 @@ fn cmd_replace(
 }
 
 fn cmd_fgrep(
-    file: &PathBuf,
+    file: &Path,
     pattern: &str,
     section: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1728,10 +2008,7 @@ fn cmd_fgrep(
     Ok(())
 }
 
-fn cmd_fgrep_multi(
-    file: &PathBuf,
-    patterns: Vec<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_fgrep_multi(file: &Path, patterns: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     use regedited::fast_ops::fast_grep_multi;
 
     println!(
@@ -1942,11 +2219,11 @@ fn read_text_or_stdin(text: Option<String>) -> Result<String, Box<dyn std::error
     }
 }
 
-fn undo_path(file: &PathBuf) -> PathBuf {
+fn undo_path(file: &Path) -> PathBuf {
     PathBuf::from(format!("{}.undo", file.display()))
 }
 
-fn legacy_backup_path(file: &PathBuf) -> PathBuf {
+fn legacy_backup_path(file: &Path) -> PathBuf {
     file.with_extension("md.bak")
 }
 
@@ -1974,7 +2251,7 @@ fn cmd_undo(file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn resolve_section_name_by_index(
-    file: &PathBuf,
+    file: &Path,
     registry_index: u64,
 ) -> Result<String, Box<dyn std::error::Error>> {
     use regedited::fast_ops::fast_scan;
@@ -2005,10 +2282,7 @@ fn resolve_section_name_by_index(
     }
 }
 
-fn cmd_resolve_index(
-    file: &PathBuf,
-    registry_index: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_resolve_index(file: &Path, registry_index: u64) -> Result<(), Box<dyn std::error::Error>> {
     let section = resolve_section_name_by_index(file, registry_index)?;
     println!("{}", section);
     Ok(())
@@ -2172,7 +2446,7 @@ fn replace_line_range_and_shift(
     let header = scan_content(&result)?;
     let result_lines: Vec<&str> = result.lines().collect();
     let mut changes = Vec::new();
-    for (_, info) in &header.sections {
+    for info in header.sections.values() {
         if info.ascii_line >= result_lines.len() {
             continue;
         }
@@ -2350,13 +2624,14 @@ fn parse_ref_spec(spec: &str) -> Result<RefSpec, Box<dyn std::error::Error>> {
     if let Some(rest) = trimmed.strip_prefix("hex:") {
         return parse_hex_ref(rest);
     }
-    if trimmed.len() >= 9 && (trimmed.contains('x') || trimmed.starts_with("0x")) {
-        if regedited::zone_type::decode_hex_word(trimmed).is_ok() {
-            return Ok(RefSpec::HexRange {
-                start: trimmed.to_string(),
-                end: trimmed.to_string(),
-            });
-        }
+    if trimmed.len() >= 9
+        && (trimmed.contains('x') || trimmed.starts_with("0x"))
+        && regedited::zone_type::decode_hex_word(trimmed).is_ok()
+    {
+        return Ok(RefSpec::HexRange {
+            start: trimmed.to_string(),
+            end: trimmed.to_string(),
+        });
     }
 
     let parts: Vec<&str> = trimmed.split(':').collect();
@@ -2475,7 +2750,7 @@ fn read_ref_value(file: &PathBuf, spec: &RefSpec) -> Result<String, Box<dyn std:
 }
 
 fn find_scanned_section(
-    file: &PathBuf,
+    file: &Path,
     registry_index: u64,
 ) -> Result<regedited::fast_ops::ScannedSection, Box<dyn std::error::Error>> {
     let matches: Vec<_> = regedited::fast_ops::fast_scan(file)?
@@ -2500,7 +2775,7 @@ fn find_scanned_section(
 }
 
 fn resolve_range_ref(
-    file: &PathBuf,
+    file: &Path,
     spec: &RefSpec,
 ) -> Result<ResolvedRange, Box<dyn std::error::Error>> {
     match spec {
@@ -2686,7 +2961,7 @@ fn clear_ref_value(file: &PathBuf, spec: &RefSpec) -> Result<(), Box<dyn std::er
 }
 
 fn range_bounds_for_move(
-    file: &PathBuf,
+    file: &Path,
     spec: &RefSpec,
 ) -> Result<Option<ResolvedRange>, Box<dyn std::error::Error>> {
     match spec {
@@ -2698,7 +2973,7 @@ fn range_bounds_for_move(
 }
 
 fn adjust_literal_target_after_source_clear(
-    file: &PathBuf,
+    file: &Path,
     target: &RefSpec,
     source: Option<&ResolvedRange>,
 ) -> Result<RefSpec, Box<dyn std::error::Error>> {
@@ -3527,7 +3802,7 @@ fn cmd_schema(
         let header = regedited::header::scan_content(&content)?;
 
         let mut schema = DocumentSchema::new();
-        for (name, _info) in &header.sections {
+        for name in header.sections.keys() {
             let sec = schema.section(name);
             // Add default fields
             sec.add_field(regedited::schema::SchemaField::new(
@@ -3630,7 +3905,7 @@ fn cmd_reg_types() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("{}", "Registry Types:".green().bold());
     println!();
-    println!("  {:<16} {}", "Type", "Description");
+    println!("  {:<16} Description", "Type");
     println!("  {:-<40}", "");
 
     for (name, desc) in list_registry_types() {
@@ -3668,7 +3943,7 @@ fn cmd_reg_parse(value: &str, reg_type: &str) -> Result<(), Box<dyn std::error::
 
 // ==================== SERVE COMMAND ====================
 
-fn cmd_serve(file: &PathBuf, port: u16, read_only: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_serve(file: &Path, port: u16, read_only: bool) -> Result<(), Box<dyn std::error::Error>> {
     use regedited::serve::{serve, ServeConfig};
 
     if !file.exists() {

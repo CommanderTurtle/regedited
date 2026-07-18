@@ -71,12 +71,61 @@ regedited ref-get doc.md index:1:zone:1
 regedited ref-get doc.md index:1:zone:1 --clip
 ```
 
-## 4. Read More
+## 4. Enable Concise Commands
+
+The helper adds the release directory to PATH and creates `rgd` as another
+name for the same compiled executable:
+
+Windows:
+
+```powershell
+.\pathadd.ps1
+rgd load .\doc.md
+rgd l
+rgd ist 1
+rgd unload
+```
+
+Linux:
+
+```bash
+./pathadd.sh
+rgd load ./doc.md
+rgd l
+rgd ist 1
+rgd unload
+```
+
+An omitted document is accepted only after `rgd load`. Explicit paths always
+take precedence, and canonical `regedited` remains stateless.
+
+## 5. Build The Browser Package
+
+Windows:
+
+```powershell
+.\webbuild.ps1
+```
+
+Linux:
+
+```bash
+./webbuild.sh
+```
+
+These scripts check for Rust and `wasm-pack`, ask before installing a missing
+tool, and build the package under `web/pkg`. The browser surface is read-only.
+
+## 6. Read More
 
 - `docs/RUST_BEGINNER_SETUP.txt` - slower first-time Rust setup
 - `docs/shell/POWERSHELL.txt` - PowerShell command cookbook
 - `docs/shell/BASH.txt` - Bash command cookbook
 - `docs/shell/PYTHON.txt` - Python subprocess cookbook
+- `docs/shell/REPL.txt` - evcxr and direct-process cookbook
+- `docs/shell/BAT.txt` - CMD and batch cookbook
+- `docs/web/JAVASCRIPT.txt` - browser runner and Wasm APIs
+- `docs/web/STANDALONE_HTML.txt` - static-page module layout
 - `docs/ARCHITECTURE.md` - full internals and command reference
 - `docs/FORMAT.md` - minimal document format
 

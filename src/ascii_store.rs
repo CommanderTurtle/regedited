@@ -68,21 +68,9 @@ impl std::fmt::Display for ZonePair {
 }
 
 /// The hex-word line store with 3 typed zone pairs
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AsciiStore {
     pub zones: [ZonePair; ZONE_COUNT],
-}
-
-impl Default for AsciiStore {
-    fn default() -> Self {
-        Self {
-            zones: [
-                ZonePair::default(),
-                ZonePair::default(),
-                ZonePair::default(),
-            ],
-        }
-    }
 }
 
 impl AsciiStore {

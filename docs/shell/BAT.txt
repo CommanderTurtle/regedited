@@ -1,0 +1,68 @@
+REGEDITED WINDOWS CMD/BAT INTERACTIVE REFERENCE
+
+This file uses cmd.exe syntax. The release directory must be on PATH.
+
+SETUP
+
+set "DOC=%CD%\example.md"
+where regedited
+where rgd
+regedited --version
+rgd load "%DOC%"
+
+LOADED DOCUMENT AND HELP
+
+rgd load
+rgd l
+rgd sm
+rgd rg -help
+rgd cv -help
+
+READS
+
+rgd rg i38s1
+rgd rg i38db7
+rgd rg i38dbl
+rgd rg i38z1
+rgd rg i38zh1
+
+CLIPBOARD
+
+rgd rg i38s1 c
+rgd cv d 58 p 59 c
+regedited ref-get "%DOC%" index:38:string:1 --clip
+
+WRITES
+
+rgd rs i38s2 --text "updated from cmd.exe"
+rgd rc i38s1 i39s1
+rgd rc i38z1 i39z1 --append
+rgd sz ProjectConfig 0 10 20 --zone-type code
+
+BOOLEAN AND DIFF
+
+rgd rb i38db7 gt 8 --then-val TRUE --else-val FALSE
+rgd rb i38s1 contains waterfront --then-val TRUE --else-val FALSE
+rgd rd i38s1 i39s1
+
+CONVERSION
+
+regedited convert 58
+regedited convert 58 59 80 90 300 325
+regedited convert -z d 58 d 59
+rgd cv b 10 20 m 30 40 d 50 60
+
+EXPLICIT FILE OVERRIDE
+
+rgd l ".\another.md"
+rgd rg ".\another.md" i7s1
+
+TRANSACTION AND STATE
+
+rgd tx begin
+rgd tx status
+rgd tx rollback
+rgd st
+
+Use rgd --help for every shorthand and its canonical argument line. Use
+regedited -ex repl for compact-reference and alias tables.

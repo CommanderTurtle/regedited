@@ -1,0 +1,26 @@
+$ErrorActionPreference = 'Stop'
+
+$Doc = Join-Path $PWD 'example.md'
+if (-not (Test-Path -LiteralPath $Doc -PathType Leaf)) {
+    throw "Create or copy a canonical Regedited document to $Doc first."
+}
+
+rgd load $Doc
+rgd l
+rgd sm
+
+$name = rgd rg i38s1
+$score = [double](rgd rg i38db7)
+$decision = rgd rb i38db7 gte 8 --then-val TRUE --else-val FALSE
+
+[pscustomobject]@{
+    Name = $name
+    Score = $score
+    Decision = $decision
+} | Format-List
+
+$conversion = rgd cv p 10 20 b 30 40 d 50 60
+$conversion
+
+rgd rg i38s1 c
+Write-Host 'String 1 and the selected conversion can now be copied natively.'

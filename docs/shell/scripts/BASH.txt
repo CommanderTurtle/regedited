@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+doc="${1:-$PWD/example.md}"
+if [[ ! -f "$doc" ]]; then
+  printf 'Create or copy a canonical Regedited document to %s first.\n' "$doc" >&2
+  exit 1
+fi
+
+rgd load "$doc"
+rgd l
+rgd sm
+
+name="$(rgd rg i38s1)"
+score="$(rgd rg i38db7)"
+decision="$(rgd rb i38db7 gte 8 --then-val TRUE --else-val FALSE)"
+
+printf 'name=%s\nscore=%s\ndecision=%s\n' "$name" "$score" "$decision"
+rgd cv p 10 20 b 30 40 d 50 60

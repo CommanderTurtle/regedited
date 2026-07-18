@@ -1,0 +1,104 @@
+REGEDITED INTERACTIVE COMMAND REFERENCE
+
+This is a shell-neutral command stream for an interactive terminal. It is not
+an embedded language REPL. Run each line in PowerShell, Bash, CMD, or another
+shell after putting target/release on PATH.
+
+EXECUTABLES
+
+regedited --help
+rgd --help
+
+Both names resolve to one executable payload. regedited uses canonical command
+names. rgd accepts the compact aliases and a persisted default document.
+
+LOADED DOCUMENT
+
+rgd load ./example.md
+rgd load
+rgd l
+rgd sm
+rgd i
+rgd unload
+
+An explicit path always wins:
+
+rgd l ./another.md
+
+Without an explicit or loaded path, file-oriented rgd commands stop with a
+clear error. Canonical regedited commands always keep their original file
+argument.
+
+COMMAND HELP
+
+regedited ref-get -help
+rgd rg -help
+regedited convert -help
+rgd cv -help
+
+COMPACT REFERENCES
+
+i38             index:38
+i38s1           index:38:string:1
+i38s2           index:38:string:2
+i38s3           index:38:string:3
+i38db1          index:38:db:1
+i38db9          index:38:db:9
+i38dbl          index:38:dbline
+i38hl           index:38:hexline
+i38hwl          index:38:hex-word-line
+i38rs           index:38:ranges
+i38z1           index:38:zone:1
+i38r2           index:38:range:2
+i38zh3          index:38:zonehex:3
+i38rh1          index:38:rangehex:1
+
+Reference slots are user-facing and 1-based. Legacy section-oriented commands
+retain their documented 0-based slots.
+
+REFERENCE OPERATIONS WITH A LOADED FILE
+
+rgd rg i38s1
+rgd rg i38s1 c
+rgd rs i38s2 --text "replacement"
+rgd rc i38s1 i39s1
+rgd rd i38s1 i39s1
+rgd rb i38db7 gt 8 --then-val YES --else-val NO
+
+CONVERTER
+
+regedited convert 58
+regedited convert 58 59
+regedited convert 58 59 80 90
+regedited convert 58 59 80 90 300 325
+regedited convert 58 59 --zone-type code
+regedited convert -z d 58 d 59
+regedited convert d 58 p 59 clip
+rgd cv b 10 20 m 30 40 d 50 60 c
+
+Type tokens apply until changed:
+
+p  plain or markdown
+b  code block
+m  media
+d  database
+
+clip and c copy the exact emitted conversion. Output contains only requested
+words and never pads missing ranges.
+
+CORE SHORT NAMES
+
+l list                 s scan                  sm summary
+i info                 st state                stc state-compare
+ist index-str-list     izs index-zone-set-hex  ize index-zone-extract
+izr index-zone-replace izc index-zone-copy     izt index-zone-transfer
+db db                  hl hexline              co content
+zi zone-info           ct count                c clip
+cz clip-zone           cdb clip-db             cdbl clip-dbline
+chl clip-hexline       chw clip-hexword        sn set-num
+ss set-str             sz set-zone             ln lines
+if if-contains         rg ref-get               rs ref-set
+rc ref-copy            rd ref-diff              rb ref-bool
+ri resolve-index       za zone-append           cv convert
+
+Run rgd --help for the complete runtime-generated alias table and arguments.

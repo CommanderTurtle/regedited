@@ -210,15 +210,18 @@ pub fn format_hex_word_line(pairs: &[(u32, u32)], types: &[(ZoneType, ZoneType)]
     parts.join(" : ")
 }
 
+/// Parsed line ranges and the corresponding start/end zone types.
+pub type ParsedHexWordLine = (Vec<(u32, u32)>, Vec<(ZoneType, ZoneType)>);
+
 /// Parse a hex-word line back into pairs and types
-pub fn parse_hex_word_line(line: &str) -> Result<(Vec<(u32, u32)>, Vec<(ZoneType, ZoneType)>)> {
+pub fn parse_hex_word_line(line: &str) -> Result<ParsedHexWordLine> {
     let trimmed = line.trim();
 
     // Handle blank/empty
     if trimmed.is_empty()
         || trimmed
             .chars()
-            .all(|c| c == '0' || c == 'x' || c == 'X' || c == ' ' || c == ':' || c == '0')
+            .all(|c| c == '0' || c == 'x' || c == 'X' || c == ' ' || c == ':')
     {
         let hex_part = trimmed.trim_start_matches("0x").trim_start_matches("0X");
         let all_zero = hex_part.chars().all(|c| c == '0' || c == ' ' || c == ':');
