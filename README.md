@@ -31,7 +31,7 @@ The newer native ref layer turns those low-level pointers into stable addresses 
 
 ---
 
-Latest changes at [changelog.md](./changelog)
+Latest changes at [changelog.md](./CHANGELOG.md)
 
 - Added shorthand for everything. Vastly improved helpscreens and QoL. 
 - Allowed "loading" file location which thereon appends the string of filepath automatically.
