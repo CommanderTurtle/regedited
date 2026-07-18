@@ -1,0 +1,19 @@
+@echo off
+setlocal EnableExtensions
+
+set "DOC=%~1"
+if not defined DOC set "DOC=%CD%\example.md"
+if not exist "%DOC%" (
+  echo Create or copy a canonical Regedited document to "%DOC%" first. 1>&2
+  exit /b 1
+)
+
+rgd load "%DOC%" || exit /b 1
+rgd l || exit /b 1
+rgd sm || exit /b 1
+rgd rg i38s1 || exit /b 1
+rgd rg i38db7 || exit /b 1
+rgd rb i38db7 gte 8 --then-val TRUE --else-val FALSE || exit /b 1
+rgd cv p 10 20 b 30 40 d 50 60 || exit /b 1
+
+endlocal

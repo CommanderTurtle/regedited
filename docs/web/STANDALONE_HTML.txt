@@ -1,0 +1,36 @@
+REGEDITED STANDALONE HTML PATTERN
+
+Expected project shape:
+
+  index.html
+  regedited/
+    pkg/
+      regedited_web.js
+      regedited_web_bg.wasm
+      regedited_web.d.ts
+      regedited_web_bg.wasm.d.ts
+      runner.js
+      package.json
+
+Use the CLI-shaped runner from a module script:
+
+  <script type="module">
+    import { createPageRunner } from "./regedited/pkg/runner.js";
+
+    const rgd = await createPageRunner({ raw: true });
+    const encoded = rgd.run("cv", "b 10 20 d 30 40");
+    const value = rgd.run("rg", "i38s1");
+    const state = rgd.run("s");
+
+    console.log({ encoded, value, state });
+  </script>
+
+For clipboard buttons, call navigator.clipboard.writeText from a user gesture:
+
+  copyButton.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(rgd.convert(input.value, "markdown"));
+  });
+
+The source import path is relative to the HTML URL, not the Rust checkout. Keep
+regedited_web.js and regedited_web_bg.wasm adjacent unless a bundler rewrites
+their relationship.

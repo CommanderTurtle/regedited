@@ -400,3 +400,23 @@ print(value)
 
 hex_range = run("ref-get", DOC, "index:38:zonehex:1")
 print("defined hex range:", hex_range)
+
+RGD COMPACT WORKFLOW
+
+After pathadd.ps or pathadd.sh, Python finds rgd through ordinary PATH lookup.
+It is a hard link or symlink to the same regedited executable payload.
+
+subprocess.run(["rgd", "load", DOC], check=True)
+print(run("l"))
+print(run("sm"))
+print(run("rg", "i38s1"))
+print(run("rb", "i38db7", "gte", "8", "--then-val", "TRUE", "--else-val", "FALSE"))
+print(run("cv", "d", "58", "p", "59"))
+
+To copy instead of capture stdout:
+
+subprocess.run(["rgd", "rg", "i38s1", "c"], check=True)
+subprocess.run(["rgd", "cv", "b", "10", "20", "c"], check=True)
+
+Use subprocess argument lists, not shell=True, so spaces and edge characters
+remain type-safe process arguments.

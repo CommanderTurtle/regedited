@@ -363,3 +363,25 @@ $value
 
 $hexRange = & $REG ref-get $DOC 'index:38:zonehex:1'
 "defined hex range: $hexRange"
+
+RGD COMPACT WORKFLOW
+
+pathadd.ps creates rgd.exe as a hard link to the release regedited.exe and
+adds target/release to the user PATH. After that, rgd uses the same executable
+payload with compact argument preprocessing.
+
+rgd load $DOC
+rgd load
+rgd l
+rgd sm
+rgd ist 38
+rgd rg i38s1
+rgd rg i38s1 c
+rgd rb i38db7 gte 8 --then-val TRUE --else-val FALSE
+rgd rd i38s1 i39s1
+rgd cv d 58 p 59
+rgd cv b 10 20 m 30 40 d 50 60 c
+
+The compact ref forms are listed by regedited -ex repl. Run rgd --help for the
+complete runtime-generated shorthand table. An explicit path may still follow
+the compact command and overrides the loaded document.

@@ -227,24 +227,18 @@ pub fn scan_content(content: &str) -> Result<DocumentHeader> {
         }
 
         // Check for literal "regedited open" trigger (can appear ANYWHERE in a line).
-        if !matched {
-            if contains_regedited_open_trigger(line) {
-                let section_name = canonical_trigger_section_key(
-                    content,
-                    byte_offset + raw_line.len(),
-                    &mut trigger_counter,
-                );
-                if let Some((prev_name, prev_line, prev_byte)) = current_header.take() {
-                    let info = SectionInfo::new(
-                        prev_name,
-                        prev_line,
-                        prev_byte,
-                        line_num.saturating_sub(1),
-                    );
-                    sections.insert(info.name.clone(), info);
-                }
-                current_header = Some((section_name, line_num, byte_offset));
+        if !matched && contains_regedited_open_trigger(line) {
+            let section_name = canonical_trigger_section_key(
+                content,
+                byte_offset + raw_line.len(),
+                &mut trigger_counter,
+            );
+            if let Some((prev_name, prev_line, prev_byte)) = current_header.take() {
+                let info =
+                    SectionInfo::new(prev_name, prev_line, prev_byte, line_num.saturating_sub(1));
+                sections.insert(info.name.clone(), info);
             }
+            current_header = Some((section_name, line_num, byte_offset));
         }
 
         total_lines += 1;
@@ -275,10 +269,9 @@ pub fn scan_content(content: &str) -> Result<DocumentHeader> {
 pub fn quick_scan_names(content: &str) -> Vec<(String, usize)> {
     let mut result = Vec::new();
     let mut trigger_counter: u64 = 0;
-    let mut line_num = 0usize;
     let mut byte_offset = 0usize;
 
-    for raw_line in content.split_inclusive('\n') {
+    for (line_num, raw_line) in content.split_inclusive('\n').enumerate() {
         let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
         if let Some(name) = parse_section_header(line) {
             result.push((name, line_num));
@@ -291,7 +284,6 @@ pub fn quick_scan_names(content: &str) -> Vec<(String, usize)> {
             result.push((section_key, line_num));
         }
 
-        line_num += 1;
         byte_offset += raw_line.len();
     }
 
@@ -349,8 +341,8 @@ fn parse_registry_index_line(line: &str) -> Option<u64> {
 /// Returns `None` otherwise
 fn parse_section_header(line: &str) -> Option<String> {
     let trimmed = line.trim_start();
-    if trimmed.starts_with(SECTION_PREFIX) {
-        let name = trimmed[SECTION_PREFIX.len()..].trim();
+    if let Some(rest) = trimmed.strip_prefix(SECTION_PREFIX) {
+        let name = rest.trim();
         if !name.is_empty() {
             return Some(name.to_string());
         }

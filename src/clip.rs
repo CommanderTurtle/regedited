@@ -22,10 +22,13 @@
 //! ```
 
 use crate::{RegeditedError, Result};
+#[cfg(feature = "clipboard")]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+#[cfg(feature = "clipboard")]
 static CLIPBOARD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+#[cfg(feature = "clipboard")]
 fn clipboard_guard() -> Result<MutexGuard<'static, ()>> {
     CLIPBOARD_LOCK
         .get_or_init(|| Mutex::new(()))
@@ -52,15 +55,26 @@ fn clipboard_guard() -> Result<MutexGuard<'static, ()>> {
 /// copy_to_clipboard("Hello from Regedited!").unwrap();
 /// ```
 pub fn copy_to_clipboard(text: &str) -> Result<()> {
-    let _guard = clipboard_guard()?;
-    let mut clipboard = arboard::Clipboard::new()
-        .map_err(|e| RegeditedError::Clipboard(format!("Failed to open clipboard: {e}")))?;
+    #[cfg(not(feature = "clipboard"))]
+    {
+        let _ = text;
+        return Err(RegeditedError::Clipboard(
+            "native clipboard support is disabled in this build".to_string(),
+        ));
+    }
 
-    clipboard
-        .set_text(text)
-        .map_err(|e| RegeditedError::Clipboard(format!("Failed to set clipboard text: {e}")))?;
+    #[cfg(feature = "clipboard")]
+    {
+        let _guard = clipboard_guard()?;
+        let mut clipboard = arboard::Clipboard::new()
+            .map_err(|e| RegeditedError::Clipboard(format!("Failed to open clipboard: {e}")))?;
 
-    Ok(())
+        clipboard
+            .set_text(text)
+            .map_err(|e| RegeditedError::Clipboard(format!("Failed to set clipboard text: {e}")))?;
+
+        Ok(())
+    }
 }
 
 /// Get text from the system clipboard
@@ -74,15 +88,25 @@ pub fn copy_to_clipboard(text: &str) -> Result<()> {
 /// println!("Clipboard contains: {}", text);
 /// ```
 pub fn get_from_clipboard() -> Result<String> {
-    let _guard = clipboard_guard()?;
-    let mut clipboard = arboard::Clipboard::new()
-        .map_err(|e| RegeditedError::Clipboard(format!("Failed to open clipboard: {e}")))?;
+    #[cfg(not(feature = "clipboard"))]
+    {
+        return Err(RegeditedError::Clipboard(
+            "native clipboard support is disabled in this build".to_string(),
+        ));
+    }
 
-    let text = clipboard
-        .get_text()
-        .map_err(|e| RegeditedError::Clipboard(format!("Failed to get clipboard text: {e}")))?;
+    #[cfg(feature = "clipboard")]
+    {
+        let _guard = clipboard_guard()?;
+        let mut clipboard = arboard::Clipboard::new()
+            .map_err(|e| RegeditedError::Clipboard(format!("Failed to open clipboard: {e}")))?;
 
-    Ok(text)
+        let text = clipboard
+            .get_text()
+            .map_err(|e| RegeditedError::Clipboard(format!("Failed to get clipboard text: {e}")))?;
+
+        Ok(text)
+    }
 }
 
 /// Copy a zone's associated string to clipboard
@@ -317,7 +341,7 @@ pub fn clip_ascii_store(content: &str, section: &crate::header::SectionInfo) -> 
     Ok(line)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "clipboard"))]
 mod tests {
     use super::*;
     use std::sync::{Mutex, MutexGuard, OnceLock};

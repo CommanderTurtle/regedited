@@ -352,8 +352,8 @@ impl DocumentSchema {
                 continue;
             }
 
-            if trimmed.starts_with("section ") {
-                let name = trimmed[8..].trim();
+            if let Some(rest) = trimmed.strip_prefix("section ") {
+                let name = rest.trim();
                 schema
                     .sections
                     .insert(name.to_string(), SectionSchema::new(name));

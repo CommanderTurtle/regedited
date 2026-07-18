@@ -25,13 +25,13 @@
 //!
 //! ## SECTION:Config
 //! <!--DB:HEADER|section=Config|db_line=5|content_start=7|content_end=50-->
-//! 1	100	200	50	60	70	"settings"	"path"	"notes"
+//! 1    100    200    50    60    70    "settings"    "path"    "notes"
 //!
 //! (content lines 7-50...)
 //!
 //! ## SECTION:Data
 //! <!--DB:HEADER|section=Data|db_line=52|content_start=54|content_end=120-->
-//! 51	300	400	100	110	120	"records"	"format"	"backup"
+//! 51    300    400    100    110    120    "records"    "format"    "backup"
 //! ```
 
 use std::path::Path;
@@ -39,12 +39,14 @@ use std::path::Path;
 pub mod ascii_store;
 pub mod bool_ops;
 pub mod clip;
+pub mod converter;
 pub mod db_line;
 pub mod echo;
 pub mod encapsulate;
 pub mod fast_ops;
 pub mod header;
 pub mod html_extract;
+pub mod qol;
 pub mod schema;
 pub mod serve;
 pub mod store;

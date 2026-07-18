@@ -155,7 +155,7 @@ impl StringAnalysis {
     /// Display analysis summary
     pub fn summary(&self) -> String {
         if self.is_safe {
-            format!("Safe string (no special chars)")
+            "Safe string (no special chars)".to_string()
         } else if self.is_ultra_error {
             format!(
                 "ULTRA-ERROR: contains both & and | (plus: {:?})",

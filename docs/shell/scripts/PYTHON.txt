@@ -1,0 +1,30 @@
+from pathlib import Path
+import subprocess
+
+doc = Path("example.md").resolve()
+if not doc.is_file():
+    raise SystemExit(f"Create or copy a canonical Regedited document to {doc} first")
+
+def rgd(*args: str) -> str:
+    result = subprocess.run(
+        ["rgd", *args],
+        check=True,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    return result.stdout.strip()
+
+rgd("load", str(doc))
+print(rgd("l"))
+print(rgd("sm"))
+
+name = rgd("rg", "i38s1")
+score = float(rgd("rg", "i38db7"))
+decision = rgd(
+    "rb", "i38db7", "gte", "8",
+    "--then-val", "TRUE", "--else-val", "FALSE",
+)
+
+print({"name": name, "score": score, "decision": decision})
+print(rgd("cv", "p", "10", "20", "b", "30", "40", "d", "50", "60"))

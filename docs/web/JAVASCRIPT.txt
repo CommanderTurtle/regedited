@@ -1,0 +1,152 @@
+REGEDITED WEB JAVASCRIPT REFERENCE
+
+BUILD OUTPUT
+
+Run webbuild.ps on Windows or webbuild.sh on Linux. The generated browser
+package is web/pkg and contains at least:
+
+  regedited_web.js
+  regedited_web_bg.wasm
+  regedited_web.d.ts
+  regedited_web_bg.wasm.d.ts
+  package.json
+
+Copy the complete web/pkg directory into your static project. Do not copy only
+the JavaScript wrapper; it loads the adjacent Wasm file.
+
+CLI-SHAPED PAGE RUNNER
+
+import { createPageRunner, createRegeditedRunner }
+  from "./regedited/pkg/runner.js";
+
+const rgd = await createPageRunner();
+
+rgd.scan();
+rgd.list();
+rgd.fgrep("waterfront");
+rgd.fgrep("waterfront", "index:38");
+rgd.readIndex(38);
+rgd.db(38);
+rgd.indexStrList(38);
+rgd.hexline(38);
+rgd.content(38);
+rgd.refGet("i38s1");
+rgd.convert("d 58 p 59");
+
+The generic dispatcher accepts canonical binary spellings and their listed
+short forms:
+
+rgd.run("scan");
+rgd.run("s");
+rgd.run("fgrep", "waterfront", "index:38");
+rgd.run("f", "waterfront", "index:38");
+rgd.run("ref-get", "i38db9");
+rgd.run("rg", "i38s1");
+rgd.run("resolve-index", 38);
+rgd.run("ri", 38);
+rgd.run("index-str-list", 38);
+rgd.run("ist", 38);
+rgd.run("db", 38);
+rgd.run("hexline", 38);
+rgd.run("hl", 38);
+rgd.run("content", 38);
+rgd.run("co", 38);
+rgd.run("convert", "d 58 p 59");
+rgd.run("cv", "d 58 p 59");
+
+createPageRunner() scans document.documentElement.outerHTML. Use
+createPageRunner({ raw: true }) to fetch and scan the exact same-origin HTML
+source. To scan any supplied string, use createRegeditedRunner(text).
+
+The runner is intentionally read-only. Browsers cannot invoke the native
+binary, edit arbitrary host files, access native clipboard APIs, or start the
+HTTP container. Its methods call the same compiled Rust scanner, grep,
+reference, and converter logic through WebAssembly.
+
+BROWSER MODULE IMPORT
+
+import init, {
+  version,
+  convert,
+  compact_ref,
+  grep_document,
+  read_index,
+  Registry,
+  scan_document,
+  section_content,
+  section_data,
+} from "./regedited/pkg/regedited_web.js";
+
+await init();
+
+CONVERSION
+
+convert("58", "markdown");
+convert("58 59 80 90", "markdown");
+convert("d 58 p 59", "markdown");
+convert("b 10 20 m 30 40 d 50 60", "markdown");
+
+The returned string contains only requested hexwords. Browser clipboard access
+is intentionally JavaScript-owned:
+
+const value = convert("d 58 p 59", "markdown");
+await navigator.clipboard.writeText(value);
+
+COMPACT REFERENCES
+
+compact_ref("i38");
+compact_ref("i38s1");
+compact_ref("i38db9");
+compact_ref("i38dbl");
+compact_ref("i38hl");
+compact_ref("i38z1");
+compact_ref("i38zh1");
+
+Unknown or already canonical values are returned unchanged.
+
+DOCUMENT SCAN
+
+const state = JSON.parse(scan_document(documentText));
+console.log(state.totalLines, state.totalBytes, state.sections);
+
+The exact lowercase byte phrase regedited open may occur anywhere on an opener
+line. Nothing around that phrase becomes a name. The following index line is
+the identity, such as index:38.
+
+SECTION READS
+
+section_content(documentText, "index:38");
+section_data(documentText, "index:38");
+
+These functions operate on the string supplied by the page. They do not read
+host files, start the native HTTP container, or access the native clipboard.
+
+CACHED PAGE RUNNER
+
+const rawPage = document.documentElement.outerHTML;
+const registry = new Registry(rawPage);
+
+JSON.parse(registry.scan());
+JSON.parse(registry.grep("waterfront"));
+JSON.parse(registry.grep("waterfront", "index:38"));
+JSON.parse(registry.read_index(38));
+registry.section_content("index:38");
+registry.section_data("index:38");
+
+Registry scans the raw string once and reuses its canonical index map. Grep is
+the same case-insensitive line matcher used by native fast_grep. Scoped grep
+searches only the selected index content, matching the native section-limited
+operation. read_index returns its hexword line, nine DB values, three strings,
+content, and line bounds as JSON.
+
+The stateless equivalents are also exported:
+
+JSON.parse(grep_document(rawPage, "waterfront"));
+JSON.parse(grep_document(rawPage, "waterfront", "index:38"));
+JSON.parse(read_index(rawPage, 38));
+
+SERVING
+
+ES modules and Wasm should be served over HTTP instead of opened with file://.
+Any ordinary static development server is sufficient. For the included check,
+serve the web directory and open example/index.html.

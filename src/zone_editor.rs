@@ -62,7 +62,7 @@ pub fn apply_line_deltas(content: &str, deltas: &[LineDelta]) -> Result<String> 
     // Sort deltas by start line (reverse order so earlier changes
     // don't affect later line numbers)
     let mut sorted = deltas.to_vec();
-    sorted.sort_by(|a, b| b.start_line.cmp(&a.start_line));
+    sorted.sort_by_key(|delta| std::cmp::Reverse(delta.start_line));
 
     let mut result = content.to_string();
 
@@ -74,7 +74,7 @@ pub fn apply_line_deltas(content: &str, deltas: &[LineDelta]) -> Result<String> 
         // Build a list of (line_index, new_content) changes
         let mut changes: Vec<(usize, String)> = Vec::new();
 
-        for (_, info) in &header.sections {
+        for info in header.sections.values() {
             // Update the hex-word line
             let ascii_line = info.ascii_line;
             if ascii_line >= lines.len() {
@@ -213,8 +213,8 @@ pub fn replace_zone_content(
     let mut new_lines: Vec<String> = Vec::new();
 
     // Lines before the zone
-    for i in 0..start_line.min(lines.len()) {
-        new_lines.push(lines[i].to_string());
+    for line in lines.iter().take(start_line.min(lines.len())) {
+        new_lines.push((*line).to_string());
     }
 
     // New content (add trailing newline if needed)
@@ -224,8 +224,8 @@ pub fn replace_zone_content(
 
     // Lines after the zone
     if end_line + 1 < lines.len() {
-        for i in (end_line + 1)..lines.len() {
-            new_lines.push(lines[i].to_string());
+        for line in lines.iter().skip(end_line + 1) {
+            new_lines.push((*line).to_string());
         }
     }
 
@@ -458,11 +458,11 @@ alpha s3
 Line 10 content
 Line 11 content
 "#;
-        let header = scan_content(&doc).unwrap();
+        let header = scan_content(doc).unwrap();
         let alpha = header.get_section("Alpha").unwrap().clone();
 
         // Copy zone 1 (lines 10-20) → zone 2 (also lines 10-20)
-        let new = copy_zone_content(&doc, &alpha, 1, &alpha, 2).unwrap();
+        let new = copy_zone_content(doc, &alpha, 1, &alpha, 2).unwrap();
 
         // Zone 2 should now have zone 1's content
         assert!(new.contains("Line 10 content"));

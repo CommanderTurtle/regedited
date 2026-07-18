@@ -31,6 +31,13 @@ The newer native ref layer turns those low-level pointers into stable addresses 
 
 ---
 
+Latest changes at [changelog.md](./changelog)
+
+- Added shorthand for everything. Vastly improved helpscreens and QoL. 
+- Allowed "loading" file location which thereon appends the string of filepath automatically.
+
+---
+
 ## Opening an Index
 
 ### \``regedited open`\`
@@ -729,6 +736,39 @@ cd pi && ./install.sh --omp  # ~/.omp/agent/skills/
 Then `/reload` in Pi — it auto-discovers the skill from `SKILL.md`.
 
 ---
+
+## Concise `rgd` Workflow
+
+The build still contains one Rust executable. The PATH helpers create `rgd` as
+an alternate invocation name for the same binary, enabling concise aliases and
+an optional loaded document:
+
+```powershell
+.\pathadd.ps1
+rgd load .\document.md
+rgd l
+rgd ist 38
+rgd rg i38s1
+rgd cv d 58 p 59 c
+rgd unload
+```
+
+Canonical `regedited` commands remain available and stateless. Use
+`rgd <command> -help` for command-local syntax, `regedited -ex powershell` for
+an interactive-shell reference, or `regedited -ex script powershell` for a
+script-oriented reference. REPL, Python, Bash, and BAT streams use the same
+forms.
+
+## Browser Build
+
+`webbuild.ps1` and `webbuild.sh` build the read-only scanner, grep, index,
+conversion, and compact-reference APIs with `wasm-pack`. The generated package
+also contains `runner.js`, a small CLI-shaped JavaScript adapter. Browser code
+does not spawn the native executable and does not expose mutation, clipboard,
+WAL, transaction, or serve commands.
+
+See `docs/web/JAVASCRIPT.txt` and `docs/web/STANDALONE_HTML.txt` for exact
+module usage.
 
 ## Building
 

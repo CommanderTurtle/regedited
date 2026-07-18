@@ -1,0 +1,27 @@
+REGEDITED INTERACTIVE SCRIPT WALKTHROUGH
+
+Enter these commands one at a time after replacing ./example.md with a valid
+document. This flow leaves the original canonical handlers in control.
+
+rgd load ./example.md
+rgd load
+rgd l
+rgd sm
+rgd ist 38
+rgd rg i38s1
+rgd rg i38db1
+rgd rg i38z1
+rgd rb i38db1 gte 1 --then-val TRUE --else-val FALSE
+rgd rd i38s1 i38s2
+rgd cv p 10 20 b 30 40 d 50 60
+rgd st
+
+To test a write safely, first work on a copy, then use:
+
+rgd ss ProjectConfig 0 "updated from the interactive walkthrough"
+rgd rs i38s2 --text "updated through a native compact ref"
+rgd u
+
+Clear context without touching the document:
+
+rgd unload

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Regedited Web Check</title>
+</head>
+<body>
+  <pre id="output">Loading...</pre>
+  <script type="module">
+    import { createPageRunner, createRegeditedRunner } from "../pkg/runner.js";
+    const documentText = `prefix regedited open suffix
+index: 38
+0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+one
+two
+three
+---
+content`;
+    const rgd = await createRegeditedRunner(documentText);
+    const rawPage = await createPageRunner({ raw: true });
+    const result = {
+      ref: rgd.compactRef("i38s1"),
+      refValue: rgd.run("rg", "i38s1"),
+      conversion: rgd.run("cv", "d 58 p 59"),
+      scan: rgd.run("s"),
+      grep: rgd.run("f", "content"),
+      index: rgd.run("ri", 38),
+      rawPageSections: rawPage.list().length,
+    };
+    document.querySelector("#output").textContent = JSON.stringify(result, null, 2);
+  </script>
+</body>
+</html>

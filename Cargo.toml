@@ -10,6 +10,10 @@ keywords = ["database", "plaintext", "markdown", "parser", "memory-mapped"]
 categories = ["database-implementations", "parsing", "command-line-utilities"]
 rust-version = "1.70"
 
+[features]
+default = ["clipboard"]
+clipboard = ["dep:arboard"]
+
 [[bin]]
 name = "regedited"
 path = "src/main.rs"
@@ -37,7 +41,7 @@ regex = "1.10"
 
 # Clipboard support (cross-platform)
 # On Windows, this uses the native clipboard API
-arboard = "3.3"
+arboard = { version = "3.3", optional = true }
 
 # Logging
 tracing = "0.1"

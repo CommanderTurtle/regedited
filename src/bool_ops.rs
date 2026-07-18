@@ -101,7 +101,7 @@ pub fn bool_and(content: &str, patterns: &[String]) -> BoolResult {
     }
 
     // Remove duplicate lines
-    all_matches.sort_by(|a, b| a.0.cmp(&b.0));
+    all_matches.sort_by_key(|a| a.0);
     all_matches.dedup_by(|a, b| a.0 == b.0);
 
     let desc = format!(
@@ -172,7 +172,7 @@ pub fn bool_or(content: &str, patterns: &[String]) -> BoolResult {
     }
 
     // Deduplicate
-    all_matches.sort_by(|a, b| a.0.cmp(&b.0));
+    all_matches.sort_by_key(|a| a.0);
     all_matches.dedup_by(|a, b| a.0 == b.0);
 
     BoolResult {

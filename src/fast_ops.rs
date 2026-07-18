@@ -121,10 +121,10 @@ pub fn fast_scan_content(content: &str) -> Result<Vec<ScannedSection>> {
 
         // Read 3 strings
         let mut strings = [String::new(), String::new(), String::new()];
-        for i in 0..3 {
+        for (i, string) in strings.iter_mut().enumerate() {
             let line_idx = info.numeric_line + 1 + i;
             if let Some(line) = line_lookup.get(&line_idx) {
-                strings[i] = line.trim().to_string();
+                *string = line.trim().to_string();
             }
         }
 
@@ -206,7 +206,7 @@ pub fn filter_by_value(
 pub fn filter_by_type(sections: &[ScannedSection], zt: ZoneType) -> Vec<&ScannedSection> {
     sections
         .iter()
-        .filter(|s| s.zone_types.iter().any(|&t| t == zt))
+        .filter(|s| s.zone_types.contains(&zt))
         .collect()
 }
 
@@ -514,8 +514,8 @@ pub fn fast_replace_content(
                     let mut new_lines: Vec<String> = Vec::new();
 
                     // Lines before content
-                    for i in 0..t_start {
-                        new_lines.push(target_lines[i].to_string());
+                    for line in target_lines.iter().take(t_start) {
+                        new_lines.push((*line).to_string());
                     }
 
                     // New content
@@ -524,8 +524,8 @@ pub fn fast_replace_content(
                     }
 
                     // Lines after content
-                    for i in (t_end + 1)..target_lines.len() {
-                        new_lines.push(target_lines[i].to_string());
+                    for line in target_lines.iter().skip(t_end + 1) {
+                        new_lines.push((*line).to_string());
                     }
 
                     result = new_lines.join("\n");
@@ -614,7 +614,11 @@ fn fast_replace_str(
 /// For a 10GB file, only the matching lines are read into RAM.
 pub fn fast_grep(file_path: &Path, pattern: &str) -> Result<Vec<(usize, String)>> {
     let mmap = MmapFile::open(file_path)?;
-    let content = mmap.as_str();
+    Ok(grep_content(mmap.as_str(), pattern))
+}
+
+/// In-memory line grep used by native files and browser/Wasm callers.
+pub fn grep_content(content: &str, pattern: &str) -> Vec<(usize, String)> {
     let lower_pattern = pattern.to_lowercase();
     let mut matches = Vec::new();
 
@@ -624,7 +628,7 @@ pub fn fast_grep(file_path: &Path, pattern: &str) -> Result<Vec<(usize, String)>
         }
     }
 
-    Ok(matches)
+    matches
 }
 
 /// Section-limited grep — only search within a section's content
@@ -634,7 +638,16 @@ pub fn fast_grep_section(
     pattern: &str,
 ) -> Result<Vec<(usize, String)>> {
     let content = std::fs::read_to_string(file_path)?;
-    let header = scan_content(&content)?;
+    grep_content_section(&content, section_name, pattern)
+}
+
+/// In-memory section-limited grep with the same matching rules as native grep.
+pub fn grep_content_section(
+    content: &str,
+    section_name: &str,
+    pattern: &str,
+) -> Result<Vec<(usize, String)>> {
+    let header = scan_content(content)?;
 
     let section = header
         .get_section(section_name)
@@ -663,6 +676,11 @@ pub fn fast_grep_multi(
     patterns: &[String],
 ) -> Result<Vec<(usize, String, Vec<String>)>> {
     let content = std::fs::read_to_string(file_path)?;
+    Ok(grep_content_multi(&content, patterns))
+}
+
+/// In-memory multi-pattern grep used by native files and browser/Wasm callers.
+pub fn grep_content_multi(content: &str, patterns: &[String]) -> Vec<(usize, String, Vec<String>)> {
     let lower_patterns: Vec<String> = patterns.iter().map(|p| p.to_lowercase()).collect();
     let mut matches = Vec::new();
 
@@ -678,7 +696,7 @@ pub fn fast_grep_multi(
         }
     }
 
-    Ok(matches)
+    matches
 }
 
 // ==================== DISPLAY HELPERS ====================
@@ -835,6 +853,27 @@ More beta.
             fast_grep_multi(tmp.path(), &["Alpha".to_string(), "Beta".to_string()]).unwrap();
         // Each line containing either Alpha or Beta
         assert!(matches.len() >= 2);
+    }
+
+    #[test]
+    fn in_memory_grep_matches_native_file_grep() {
+        let content = test_doc();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), &content).unwrap();
+
+        assert_eq!(
+            grep_content(&content, "CONTENT"),
+            fast_grep(tmp.path(), "CONTENT").unwrap()
+        );
+        assert_eq!(
+            grep_content_section(&content, "Alpha", "content").unwrap(),
+            fast_grep_section(tmp.path(), "Alpha", "content").unwrap()
+        );
+        let patterns = ["Alpha".to_string(), "Beta".to_string()];
+        assert_eq!(
+            grep_content_multi(&content, &patterns),
+            fast_grep_multi(tmp.path(), &patterns).unwrap()
+        );
     }
 
     #[test]

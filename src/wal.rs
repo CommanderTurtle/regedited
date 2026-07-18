@@ -182,8 +182,8 @@ impl WalOperation {
         // Split on | but not on \| (escaped pipes)
         let mut parts = Vec::new();
         let mut current = String::new();
-        let mut chars = body.chars().peekable();
-        while let Some(c) = chars.next() {
+        let chars = body.chars().peekable();
+        for c in chars {
             if c == '|' {
                 // Check if this | is escaped (preceded by \)
                 if !current.ends_with('\\') {
