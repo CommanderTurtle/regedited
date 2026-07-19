@@ -782,7 +782,7 @@ Minimum Rust version: 1.70
 
 ## License
 
-A databasing tool built under Turtle Protect Inc.'s [XML project](https://shel.sh/projects/XML)
+A database tool built with plaintext parsing inspiration from Turtle Protect Inc.'s [XML project](https://docs.shel.sh/xml-project)
 
 This tool is for educational purposes, licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
 - https://www.gnu.org/licenses/agpl-3.0.html
