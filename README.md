@@ -200,7 +200,7 @@ Beginner and shell-specific docs:
 
 | Doc | Use |
 |-----|-----|
-| [docs/RUST_BEGINNER_SETUP.txt](./docs/RUST_BEGINNER_SETUP.txt) | Install Rust, verify Cargo/rustc/rustup, build, test, and install `regedited` locally |
+| [./QUICK_START.md](./QUICK_START.md) | Install Rust, verify Cargo/rustc/rustup, build, test, and install `regedited` locally |
 | [docs/shell/POWERSHELL.txt](./docs/shell/POWERSHELL.txt) | PowerShell-native command examples, clipboard flow, refs, bools, serve mode |
 | [docs/shell/BASH.txt](./docs/shell/BASH.txt) | Bash/Linux/macOS-style command examples and pipes |
 | [docs/shell/PYTHON.txt](./docs/shell/PYTHON.txt) | Python subprocess examples for scripting Regedited from a managed runtime |
