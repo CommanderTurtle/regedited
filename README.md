@@ -18,6 +18,24 @@ Regedited finds the literal phrase `regedited open` anywhere in a line. The stru
 
 The source can be Markdown, HTML, JavaScript, F#, CSS, a shell script, or any other UTF-8 text file. Regedited does not assign meaning to the surrounding syntax. It indexes only the small structure you explicitly give it.
 
+### Table of Contents:
+
+- [Quick Start](./QUICK_START.md)
+- [Changelog](./CHANGELOG.md)
+- [Architecture](./docs/ARCHITECTURE.md)
+- [Flowcharts](./docs/FLOWCHART.md)
+- [Python integration](./docs/PYTHON.md)
+- [PowerShell commands](./docs/shell/POWERSHELL.txt)
+- [Bash commands](./docs/shell/BASH.txt)
+- [Python subprocess commands](./docs/shell/PYTHON.txt)
+- [REPL commands](./docs/shell/REPL.txt)
+- [Batch commands](./docs/shell/BAT.txt)
+- [JavaScript API](./docs/web/JAVASCRIPT.txt)
+- [Standalone HTML](./docs/web/STANDALONE_HTML.txt)
+- [Contributing](./CONTRIBUTING.md)
+
+---
+
 ```text
 anything before this is ignored: regedited open :anything after it is ignored
 index: 64
@@ -57,6 +75,135 @@ The repository includes an ignored stress test that relocates a zone in a one-mi
 ```bash
 cargo test million_line_relocation_keeps_checkpoint_compact --lib -- --ignored
 ```
+
+## Opening an Index
+
+### \``regedited open`\`
+
+The trigger can appear **anywhere** in a line — inside HTML comments, JS block comments, shell comments, markdown, CSS, or plain inline text. The scanner only cares that the literal phrase "`regedited open`" appears in that line. Text before and after it is ignored; there is no canonical name on the trigger line. The index begins on the *following* line, and the numeric `index:` value is the address.
+
+```html
+<!-- arbitrary html comment text regedited open and this suffix is ignored
+index: 500
+0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+...etc
+-->
+
+<!-- later on.... -->
+somehtml <a href "mylink"
+</body>
+```
+
+```javascript
+/* regedited open
+index: 600
+0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000  <--- these define zones in the file. 1, 2, and 3 (for the index: #)
+42 | 7 | 3 | 256 | 1024 | 4096 | 100 | 200 | 300
+main.rs core logic
+utility functions
+database connection code
+*/
+javascript, do()
+```
+
+```bash
+# regedited open
+index: 700
+...
+```
+
+```markdown
+wdfkbsdfknwdbfkwbfkbwekfbwekfb**regedited open is here, ultra discretely**wjfjbwdkjfbwjnfbwjnf
+index: 999
+some range line of three ranges            (val:val : val:val : val:val) (defined as index ranges 1-3) <-- also easily piped to clipboard or diffed to different areas
+some database of nine decimal 10 values    (can be if/then compared to other db-vals, also called from the index & value # .. 1-9)
+some utility function                      <---
+another string                             <---
+the third and last string                  <---all these can be echoed to console and piped to clipboard — solely by the index & string number (1-3) 
+...
+```
+
+The canonical section key for those examples is `index:500`, `index:600`, `index:700`, and `index:999`. If you want a human label, store it in one of the three string lines and read it with `index-str-list` or `ref-get index:<N>:string:<1-3>`.
+
+The scanner uses zero-allocation exact byte search for the lowercase phrase `regedited open`. No `to_lowercase()`, no string allocations.
+
+### Compatible: `## SECTION:` Headers (for markdown / other plaintext) — i.e. no different than `regedited open`
+
+```markdown
+## SECTION: CodeSnippets
+index: 200
+0x0000000 : 0x0000000 : 1x000003C : 1x000004A : 0x0000000 : 0x0000000
+42 | 7 | 3 | 256 | 1024 | 4096 | 100 | 200 | 300
+main.rs core logic
+utility functions
+database connection code
+---
+fn main() { ... }
+```
+
+`## SECTION:` remains fully supported for older markdown files and hand-authored documents.
+
+---
+
+## Hex-Word Format: `Tx0123456`
+
+Each zone boundary is `TxLLLLLLL` where `T` = type digit (first character), `L` = line number (7 hex digits = 28 bits = 268M max lines):
+> 7 values = 16^6 line maximum for values (16 million line maximum)
+
+| Hex-Word | Type | Line | Meaning |
+|----------|------|------|---------|
+| `0x000000A` | Markdown (0) | 10 | Text at line 10 |
+| `1x0000050` | Code (1) | 80 | Code at line 80 |
+| `2x0000A00` | Media (2) | 2560 | Media at line 2560 |
+| `3x0000001` | Database (3) | 1 | Data at line 1 |
+
+The type digit is **immediately visible** as the first character — no bit-shifting to read it. 
+
+(Convert base10 to base16 with simple math functions included for "plain linenum range to HexWord"
+> `regedited convert 50 80 --zone-type code`
+
+### Hex-Word Categories
+
+The first nibble is the content category. It lets a plain line pointer carry both *address* and *intent*:
+
+| Nibble | Category | Use |
+|--------|----------|-----|
+| `0` | Markdown/Text | Notes, docs, client comms, templates, prose |
+| `1` | Code | Scripts, commands, config snippets, source blocks |
+| `2` | Media | Image/audio/video references, asset manifests |
+| `3` | Database | Structured blocks, generated tables, machine-owned data |
+| `4-F` | Custom/Reserved | Domain-specific future lanes |
+
+That category is why a single markdown file can act like a small database manager instead of a blob of text: Regedited knows which lines are prose, code, media, or structured data while still leaving the file human-readable.
+
+## Command Overview
+
+| Category | Key Commands | Purpose |
+|----------|-------------|---------|
+| **Scan** | `list`, `scan`, `db`, `hexline` (`ascii` legacy) | Inspect documents |
+| **Grep** | `fgrep`, `fgrep-multi`, `grep` | Memory-mapped search |
+| **Zone** | `zone-copy`, `zone-append`, `zone-replace`, `zone-extract` | Content manipulation |
+| **Write** | `set-num`, `set-str`, `set-zone`, `add`, `rm` | Edit values |
+| **Diff** | `diff`, `replace` | Safetensors-style patch |
+| **Bool** | `bool-and`, `bool-nand`, `bool-or`, `bool-xor`, `count`, `if-contains` | Content logic |
+| **Ref** | `ref-get`, `ref-set`, `ref-copy`, `ref-diff`, `ref-bool` | Address strings, DB values, zones, and hex ranges uniformly |
+| **Index** | `index-str-list`, `index-zone-set-hex` | Work directly from registry indexes |
+| **State** | `state`, `state-compare`, `undo` | Snapshot, compare, and one-step restore |
+| **HTML** | `grab-html` | Attribute extraction |
+| **Encap** | `encap` | Three-mode quoting (b/c/d) |
+| **Serve** | `serve`, `/state`, `/ref`, `/ref-bool`, `/query` | HTTP registry runtime |
+| **Util** | `types`, `convert`, `getutf`, `echo`, `clip` | Helpers |
+
+See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the complete command reference, format specification, Python integration guide, and internal architecture.
+
+Beginner and shell-specific docs:
+
+| Doc | Use |
+|-----|-----|
+| [docs/RUST_BEGINNER_SETUP.txt](./docs/RUST_BEGINNER_SETUP.txt) | Install Rust, verify Cargo/rustc/rustup, build, test, and install `regedited` locally |
+| [docs/shell/POWERSHELL.txt](./docs/shell/POWERSHELL.txt) | PowerShell-native command examples, clipboard flow, refs, bools, serve mode |
+| [docs/shell/BASH.txt](./docs/shell/BASH.txt) | Bash/Linux/macOS-style command examples and pipes |
+| [docs/shell/PYTHON.txt](./docs/shell/PYTHON.txt) | Python subprocess examples for scripting Regedited from a managed runtime |
 
 ## Quick Start
 
@@ -515,25 +662,6 @@ cargo build --release
 ```
 
 The CLI integration tests create a real `rgd` hard link and exercise loaded paths, compact refs, numeric index compatibility, checkpoint relocation, and line-to-zone assignment.
-
-<details>
-<summary><strong>Documentation index</strong></summary>
-
-- [Quick Start](./QUICK_START.md)
-- [Changelog](./CHANGELOG.md)
-- [Architecture](./docs/ARCHITECTURE.md)
-- [Flowcharts](./docs/FLOWCHART.md)
-- [Python integration](./docs/PYTHON.md)
-- [PowerShell commands](./docs/shell/POWERSHELL.txt)
-- [Bash commands](./docs/shell/BASH.txt)
-- [Python subprocess commands](./docs/shell/PYTHON.txt)
-- [REPL commands](./docs/shell/REPL.txt)
-- [Batch commands](./docs/shell/BAT.txt)
-- [JavaScript API](./docs/web/JAVASCRIPT.txt)
-- [Standalone HTML](./docs/web/STANDALONE_HTML.txt)
-- [Contributing](./CONTRIBUTING.md)
-
-</details>
 
 ## Design Boundaries
 
