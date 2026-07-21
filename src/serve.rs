@@ -108,14 +108,14 @@ pub fn serve(config: ServeConfig) -> Result<()> {
     println!("Serving: {}", config.file_path);
     println!("Read-only: {}", config.read_only);
     println!("\nEndpoints:");
-    println!("  GET /              — Status + sections");
-    println!("  GET /sections      — List all sections");
-    println!("  GET /section/{{name}}     — Section metadata");
-    println!("  GET /section/{{name}}/db  — Database table");
-    println!("  GET /section/{{name}}/hexline — Hex-word line");
-    println!("  GET /section/{{name}}/ascii — Legacy alias for /hexline");
-    println!("  GET /section/{{name}}/zone/{{i}} — Zone content");
-    println!("  GET /grep?pattern= &section= — Search");
+    println!("  GET /              — Status + indexes");
+    println!("  GET /sections      — List all indexes (legacy route name)");
+    println!("  GET /section/{{index}}     — Index metadata");
+    println!("  GET /section/{{index}}/db  — Database table");
+    println!("  GET /section/{{index}}/hexline — Hex-word line");
+    println!("  GET /section/{{index}}/ascii — Legacy alias for /hexline");
+    println!("  GET /section/{{index}}/zone/{{i}} — Zone content");
+    println!("  GET /grep?pattern= &index= — Search an index");
     println!("  GET /state         — Current Regedited state");
     println!("  GET /ref?spec=     — Read native ref spec");
     println!("  GET /ref-bool?left=&op=&right= — Boolean ref check");
@@ -177,9 +177,9 @@ fn handle_request(request: Request, state: Arc<ServerState>) {
 fn handle_root(state: &ServerState) -> Response<std::io::Cursor<Vec<u8>>> {
     let header = state.header.lock().unwrap();
     let sections: Vec<String> = header
-        .section_names()
-        .iter()
-        .map(|s| s.to_string())
+        .sections
+        .values()
+        .map(|info| info.index_label())
         .collect();
 
     let body = format!(
@@ -198,7 +198,10 @@ fn handle_sections(state: &ServerState) -> Response<std::io::Cursor<Vec<u8>>> {
         .iter()
         .map(|(name, info)| {
             let mut map = BTreeMap::new();
-            map.insert("name".to_string(), name.clone());
+            map.insert("index".to_string(), info.index_label());
+            if info.registry_index.is_some() && name != &info.index_label() {
+                map.insert("legacy_name".to_string(), name.clone());
+            }
             map.insert("header_line".to_string(), info.header_line.to_string());
             map.insert("content_start".to_string(), info.content_start.to_string());
             map.insert("content_end".to_string(), info.content_end.to_string());
@@ -218,10 +221,7 @@ fn handle_section(path: &str, state: &ServerState) -> Response<std::io::Cursor<V
     let header = state.header.lock().unwrap();
     let content = state.content.lock().unwrap();
 
-    if let Some(info) = header
-        .get_section(name)
-        .or_else(|| header.get_section_case_insensitive(name))
-    {
+    if let Ok(info) = header.resolve_section(name) {
         let lines: Vec<&str> = content.lines().collect();
         let db_line = if info.numeric_line < lines.len() {
             lines[info.numeric_line]
@@ -257,10 +257,7 @@ fn handle_section_db(path: &str, state: &ServerState) -> Response<std::io::Curso
     let header = state.header.lock().unwrap();
     let content = state.content.lock().unwrap();
 
-    if let Some(info) = header
-        .get_section(name)
-        .or_else(|| header.get_section_case_insensitive(name))
-    {
+    if let Ok(info) = header.resolve_section(name) {
         let lines: Vec<&str> = content.lines().collect();
 
         // Extract index, hex-word line, numeric line, and strings.
@@ -330,10 +327,7 @@ fn handle_section_ascii(path: &str, state: &ServerState) -> Response<std::io::Cu
     let header = state.header.lock().unwrap();
     let content = state.content.lock().unwrap();
 
-    if let Some(info) = header
-        .get_section(name)
-        .or_else(|| header.get_section_case_insensitive(name))
-    {
+    if let Ok(info) = header.resolve_section(name) {
         let lines: Vec<&str> = content.lines().collect();
         let ascii = if info.header_line + 2 < lines.len() {
             lines[info.header_line + 2]
@@ -372,10 +366,7 @@ fn handle_section_zone(path: &str, state: &ServerState) -> Response<std::io::Cur
     let header = state.header.lock().unwrap();
     let content = state.content.lock().unwrap();
 
-    if let Some(info) = header
-        .get_section(name)
-        .or_else(|| header.get_section_case_insensitive(name))
-    {
+    if let Ok(info) = header.resolve_section(name) {
         match extract_zone_content(&content, info, zone_idx) {
             Ok(zone_content) => {
                 let body = format!(
@@ -399,7 +390,7 @@ fn handle_section_zone(path: &str, state: &ServerState) -> Response<std::io::Cur
 fn handle_grep(url: &str, state: &ServerState) -> Response<std::io::Cursor<Vec<u8>>> {
     let params = parse_query_string(url);
     let pattern = params.get("pattern").map(|s| s.as_str()).unwrap_or("");
-    let section_filter = params.get("section");
+    let index_filter = params.get("index").or_else(|| params.get("section"));
 
     if pattern.is_empty() {
         return json_response(400, r#"{"error": "Missing 'pattern' parameter"}"#);
@@ -408,14 +399,24 @@ fn handle_grep(url: &str, state: &ServerState) -> Response<std::io::Cursor<Vec<u
     let header = state.header.lock().unwrap();
     let content = state.content.lock().unwrap();
     let lines: Vec<&str> = content.lines().collect();
+    let selected_header_line = match index_filter {
+        Some(reference) => match header.resolve_section(reference) {
+            Ok(info) => Some(info.header_line),
+            Err(_) => {
+                return json_response(
+                    404,
+                    &format!(r#"{{"error":"Index '{}' not found"}}"#, reference),
+                )
+            }
+        },
+        None => None,
+    };
 
     let mut matches: Vec<BTreeMap<String, String>> = Vec::new();
 
-    for (sec_name, info) in header.sections.iter() {
-        if let Some(filter) = section_filter {
-            if !sec_name.eq_ignore_ascii_case(filter) {
-                continue;
-            }
+    for info in header.sections.values() {
+        if selected_header_line.is_some_and(|line| line != info.header_line) {
+            continue;
         }
 
         for (i, line) in lines
@@ -426,7 +427,7 @@ fn handle_grep(url: &str, state: &ServerState) -> Response<std::io::Cursor<Vec<u
         {
             if line.to_lowercase().contains(&pattern.to_lowercase()) {
                 let mut m = BTreeMap::new();
-                m.insert("section".to_string(), sec_name.clone());
+                m.insert("index".to_string(), info.index_label());
                 m.insert("line".to_string(), i.to_string());
                 m.insert("content".to_string(), line.to_string());
                 matches.push(m);
@@ -916,10 +917,7 @@ fn handle_query(mut request: Request, state: &ServerState) {
             parsed.get("patterns").and_then(|v| v.as_array()),
         ) {
             let header = state.header.lock().unwrap();
-            let Some(info) = header
-                .get_section(section)
-                .or_else(|| header.get_section_case_insensitive(section))
-            else {
+            let Ok(info) = header.resolve_section(section) else {
                 let response = json_response(
                     404,
                     &format!(r#"{{"error":"Section '{}' not found"}}"#, section),

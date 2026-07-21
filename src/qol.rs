@@ -121,12 +121,28 @@ pub const COMMAND_ALIASES: &[CommandAlias] = &[
         short: "izs",
     },
     CommandAlias {
+        canonical: "index-zone-set-lines",
+        short: "izl",
+    },
+    CommandAlias {
         canonical: "state",
         short: "st",
     },
     CommandAlias {
         canonical: "state-compare",
         short: "stc",
+    },
+    CommandAlias {
+        canonical: "check",
+        short: "ck",
+    },
+    CommandAlias {
+        canonical: "commit",
+        short: "cm",
+    },
+    CommandAlias {
+        canonical: "pull",
+        short: "pl",
     },
     CommandAlias {
         canonical: "undo",
@@ -391,15 +407,65 @@ pub fn normalize_global_arguments(args: &mut Vec<OsString>) {
 
 pub fn file_placement(command: &str) -> FilePlacement {
     match command {
-        "list" | "db" | "hexline" | "scan" | "diff" | "replace" | "fgrep" | "fgrep-multi"
-        | "zone-copy" | "zone-append" | "zone-replace" | "zone-extract" | "zone-info"
-        | "resolve-index" | "index-zone-extract" | "index-zone-replace" | "index-zone-copy"
-        | "hex-extract" | "hex-replace" | "ref-get" | "ref-set" | "ref-copy" | "ref-diff"
-        | "ref-bool" | "index-str-list" | "index-zone-set-hex" | "state" | "state-compare"
-        | "undo" | "grep" | "clip" | "echo" | "set-num" | "set-str" | "set-zone" | "content"
-        | "lines" | "add" | "rm" | "summary" | "info" | "grab-html" | "bool-and" | "bool-nand"
-        | "bool-or" | "bool-xor" | "count" | "if-contains" | "wal" | "wal-replay" | "schema"
-        | "clip-zone" | "clip-db" | "clip-dbline" | "clip-hexline" => FilePlacement::First,
+        "list"
+        | "db"
+        | "hexline"
+        | "scan"
+        | "diff"
+        | "replace"
+        | "fgrep"
+        | "fgrep-multi"
+        | "zone-copy"
+        | "zone-append"
+        | "zone-replace"
+        | "zone-extract"
+        | "zone-info"
+        | "resolve-index"
+        | "index-zone-extract"
+        | "index-zone-replace"
+        | "index-zone-copy"
+        | "hex-extract"
+        | "hex-replace"
+        | "ref-get"
+        | "ref-set"
+        | "ref-copy"
+        | "ref-diff"
+        | "ref-bool"
+        | "index-str-list"
+        | "index-zone-set-hex"
+        | "state"
+        | "state-compare"
+        | "index-zone-set-lines"
+        | "check"
+        | "commit"
+        | "pull"
+        | "undo"
+        | "grep"
+        | "clip"
+        | "echo"
+        | "set-num"
+        | "set-str"
+        | "set-zone"
+        | "content"
+        | "lines"
+        | "add"
+        | "rm"
+        | "summary"
+        | "info"
+        | "grab-html"
+        | "bool-and"
+        | "bool-nand"
+        | "bool-or"
+        | "bool-xor"
+        | "count"
+        | "if-contains"
+        | "wal"
+        | "wal-replay"
+        | "schema"
+        | "clip-zone"
+        | "clip-db"
+        | "clip-dbline"
+        | "clip-hexline" => FilePlacement::First,
         "tx" => FilePlacement::AfterAction,
         "serve" => FilePlacement::FileFlag,
         "index-zone-transfer" => FilePlacement::FromFileFlag,
@@ -524,6 +590,65 @@ pub fn normalize_short_clip_flag(args: &mut [OsString]) {
     }
 }
 
+pub fn normalize_convert_destination(args: &mut Vec<OsString>) -> Result<bool, String> {
+    if args.get(1).and_then(|value| value.to_str()) != Some("convert") {
+        return Ok(false);
+    }
+    let Some(to_position) = args
+        .iter()
+        .enumerate()
+        .skip(2)
+        .find_map(|(index, value)| (value == "to").then_some(index))
+    else {
+        return Ok(false);
+    };
+
+    let assignment_tokens: Vec<String> = args[2..to_position]
+        .iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect();
+    crate::converter::parse_zone_assignment(&assignment_tokens, "markdown")?;
+
+    let mut destination = Vec::new();
+    let mut globals = Vec::new();
+    for value in &args[to_position + 1..] {
+        if matches!(value.to_str(), Some("--verbose" | "--no-save")) {
+            globals.push(value.clone());
+        } else {
+            destination.push(value.to_string_lossy().into_owned());
+        }
+    }
+    if destination.len() != 2 {
+        return Err(
+            "convert assignment syntax is: rgd cv <type> <start> <end> to i<index> <zone 1-3>"
+                .to_string(),
+        );
+    }
+    let registry_index =
+        crate::header::parse_index_reference(&destination[0]).ok_or_else(|| {
+            format!(
+                "'{}' is not an index reference; use 64, i64, or index:64",
+                destination[0]
+            )
+        })?;
+    let zone = destination[1]
+        .parse::<usize>()
+        .ok()
+        .filter(|zone| (1..=3).contains(zone))
+        .ok_or_else(|| "destination zone must be 1, 2, or 3".to_string())?;
+
+    let mut normalized = vec![
+        args[0].clone(),
+        OsString::from("index-zone-set-lines"),
+        OsString::from(registry_index.to_string()),
+        OsString::from(zone.to_string()),
+    ];
+    normalized.extend(assignment_tokens.into_iter().map(OsString::from));
+    normalized.extend(globals);
+    *args = normalized;
+    Ok(true)
+}
+
 pub fn loaded_path_state_file() -> io::Result<PathBuf> {
     if let Some(root) = std::env::var_os("REGEDITED_STATE_HOME") {
         return Ok(PathBuf::from(root).join("loaded-path.txt"));
@@ -620,6 +745,7 @@ mod tests {
             ("state-compare", "stc"),
             ("index-str-list", "ist"),
             ("index-zone-set-hex", "izs"),
+            ("index-zone-set-lines", "izl"),
             ("index-zone-extract", "ize"),
             ("index-zone-replace", "izr"),
             ("index-zone-copy", "izc"),
@@ -685,6 +811,38 @@ mod tests {
         let mut other = os_args(&["rgd", "ref-set", "i38s1", "c"]);
         normalize_short_clip_flag(&mut other);
         assert_eq!(other, os_args(&["rgd", "ref-set", "i38s1", "c"]));
+    }
+
+    #[test]
+    fn convert_destination_rewrites_to_index_zone_assignment() {
+        let mut args = os_args(&[
+            "rgd",
+            "convert",
+            "b",
+            "85",
+            "95",
+            "to",
+            "index:64",
+            "1",
+            "--no-save",
+        ]);
+        assert!(normalize_convert_destination(&mut args).unwrap());
+        assert_eq!(
+            args,
+            os_args(&[
+                "rgd",
+                "index-zone-set-lines",
+                "64",
+                "1",
+                "b",
+                "85",
+                "95",
+                "--no-save",
+            ])
+        );
+
+        let mut ordinary = os_args(&["rgd", "convert", "58", "59"]);
+        assert!(!normalize_convert_destination(&mut ordinary).unwrap());
     }
 
     #[test]

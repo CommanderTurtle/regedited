@@ -163,12 +163,9 @@ impl Store {
         self.header.section_names()
     }
 
-    /// Get section info by name
-    pub fn get_section(&self, name: &str) -> Result<&SectionInfo> {
-        self.header
-            .get_section(name)
-            .or_else(|| self.header.get_section_case_insensitive(name))
-            .ok_or_else(|| RegeditedError::SectionNotFound(name.to_string()))
+    /// Get section info by numeric index reference, with legacy names as fallback.
+    pub fn get_section(&self, reference: &str) -> Result<&SectionInfo> {
+        self.header.resolve_section(reference)
     }
 
     /// Check if a section exists
@@ -203,6 +200,35 @@ impl Store {
             self.save()?;
         }
 
+        Ok(())
+    }
+
+    /// Add a canonical `regedited open` index without a section-name identity.
+    pub fn add_index(&mut self, registry_index: u64) -> Result<()> {
+        if self
+            .header
+            .resolve_section(&registry_index.to_string())
+            .is_ok()
+        {
+            return Err(RegeditedError::Parse(format!(
+                "Index {} already exists",
+                registry_index
+            )));
+        }
+
+        let blank_ascii = crate::ascii_store::blank_ascii_store();
+        let index_text = format!(
+            "\nregedited open\nindex: {0}\n{1}\n0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0\n\n\n\n---\n",
+            registry_index, blank_ascii
+        );
+        self.content.push_str(&index_text);
+        self.dirty = true;
+        self.header = scan_content(&self.content)?;
+        self.section_cache.clear();
+
+        if self.config.auto_save {
+            self.save()?;
+        }
         Ok(())
     }
 
@@ -244,18 +270,19 @@ impl Store {
 
     /// Get a section's data (Hex-word line + DbLine)
     fn get_section_data(&mut self, name: &str) -> Result<SectionData> {
+        let resolved_name = self.get_section(name)?.name.clone();
         // Check cache first
-        if let Some(data) = self.section_cache.get(name) {
+        if let Some(data) = self.section_cache.get(&resolved_name) {
             return Ok(data.clone());
         }
 
-        let section = self.get_section(name)?.clone();
+        let section = self.get_section(&resolved_name)?.clone();
         let data_str = extract_section_data(&self.content, &section)?;
         let lines: Vec<&str> = data_str.lines().collect();
         let data = SectionData::from_lines(&lines)?;
 
         // Cache it
-        self.section_cache.insert(name.to_string(), data.clone());
+        self.section_cache.insert(resolved_name, data.clone());
 
         Ok(data)
     }
@@ -316,12 +343,13 @@ impl Store {
     /// Write a section's data back to content
     fn write_section_data(&mut self, name: &str, data: &SectionData) -> Result<()> {
         let section = self.get_section(name)?.clone();
+        let resolved_name = section.name.clone();
         let new_data = data.to_lines();
         self.content = update_section_data(&self.content, &section, &new_data)?;
         self.dirty = true;
 
         // Update cache
-        self.section_cache.insert(name.to_string(), data.clone());
+        self.section_cache.insert(resolved_name, data.clone());
 
         if self.config.auto_save {
             self.save()?;

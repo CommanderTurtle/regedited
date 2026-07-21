@@ -55,6 +55,7 @@ pub mod typed_value;
 pub mod utf16;
 pub mod wal;
 pub mod zone;
+pub mod zone_checkpoint;
 pub mod zone_editor;
 pub mod zone_type;
 

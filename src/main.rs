@@ -83,7 +83,7 @@ use regedited::{
     bool_ops::{bool_and, bool_nand, bool_or, bool_xor, count, if_contains},
     echo::safe_echo,
     encapsulate::{convert_mode, encapsulate, extract, EncapMode},
-    header::{quick_scan_names, scan_content},
+    header::scan_content,
     html_extract::{extract_attributes, format_as_set_vars, format_numbered},
     store::{Store, StoreConfig},
 };
@@ -112,34 +112,36 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// List all sections in the document
+    /// List all indexes in the document
     List {
         /// Path to the markdown file
         file: PathBuf,
     },
 
-    /// Show the database table for a section
+    /// Show the database table for an index
     Db {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference: 64, i64, or index:64 (legacy name accepted)
+        #[arg(value_name = "INDEX")]
         section: String,
     },
 
-    /// Show the hex-word line for a section (`ascii` is the legacy command name)
+    /// Show the hex-word line for an index (`ascii` is the legacy command name)
     #[command(aliases = ["ascii", "hex-word-line", "ranges"])]
     Hexline {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
     },
 
-    /// Scan all sections (safetensors-style header scan)
+    /// Scan all indexes
     Scan {
         /// Path to the markdown file
         file: PathBuf,
-        /// Filter sections by name pattern
+        /// Filter indexes by legacy key pattern
         #[arg(short, long)]
         filter: Option<String>,
         /// Filter by database value index and range (e.g., "0:5:50")
@@ -155,14 +157,14 @@ enum Commands {
         file_b: PathBuf,
     },
 
-    /// Replace sections from source into target (safetensors-style patch)
+    /// Replace matching numeric indexes from source into target
     Replace {
         /// Target file (to be modified)
         target: PathBuf,
-        /// Source file (donor sections)
+        /// Source file (donor indexes)
         source: PathBuf,
-        /// Section names to replace (all matching if omitted)
-        #[arg(short, long)]
+        /// Index references to replace (all matching if omitted)
+        #[arg(short, long = "indexes", visible_alias = "sections")]
         sections: Option<Vec<String>>,
         /// Output file (default: overwrite target)
         #[arg(short, long)]
@@ -175,8 +177,8 @@ enum Commands {
         file: PathBuf,
         /// Search pattern
         pattern: String,
-        /// Limit to a section
-        #[arg(short, long)]
+        /// Limit to an index reference
+        #[arg(short, long = "index", visible_alias = "section", value_name = "INDEX")]
         section: Option<String>,
     },
 
@@ -192,14 +194,14 @@ enum Commands {
     ZoneCopy {
         /// Path to the markdown file
         file: PathBuf,
-        /// Source section name
-        #[arg(short = 'f', long)]
+        /// Source index reference
+        #[arg(short = 'f', long, value_name = "INDEX")]
         from: String,
         /// Source zone index (0-2)
         #[arg(short = 'm', long, default_value = "0")]
         from_zone: usize,
-        /// Target section name
-        #[arg(short = 't', long)]
+        /// Target index reference
+        #[arg(short = 't', long, value_name = "INDEX")]
         to: String,
         /// Target zone index (0-2)
         #[arg(short = 'n', long, default_value = "0")]
@@ -210,7 +212,8 @@ enum Commands {
     ZoneAppend {
         /// Path to the markdown file
         file: PathBuf,
-        /// Target section name
+        /// Target index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Target zone index (0-2)
         zone: usize,
@@ -223,7 +226,8 @@ enum Commands {
     ZoneReplace {
         /// Path to the markdown file
         file: PathBuf,
-        /// Target section name
+        /// Target index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Target zone index (0-2)
         zone: usize,
@@ -236,7 +240,8 @@ enum Commands {
     ZoneExtract {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Zone index (0-2)
         zone: usize,
@@ -246,13 +251,14 @@ enum Commands {
     ZoneInfo {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Zone index (0-2)
         zone: usize,
     },
 
-    /// Resolve a registry index number to its scanned section name
+    /// Resolve a registry index number to its internal layout key
     ResolveIndex {
         /// Path to the markdown file
         file: PathBuf,
@@ -260,7 +266,7 @@ enum Commands {
         registry_index: u64,
     },
 
-    /// Extract a zone by registry index value instead of section name
+    /// Extract a zone from a numeric registry index
     IndexZoneExtract {
         /// Path to the markdown file
         file: PathBuf,
@@ -270,7 +276,7 @@ enum Commands {
         zone: usize,
     },
 
-    /// Replace a zone by registry index value instead of section name
+    /// Replace a zone in a numeric registry index
     IndexZoneReplace {
         /// Path to the markdown file
         file: PathBuf,
@@ -440,6 +446,22 @@ enum Commands {
         end: String,
     },
 
+    /// Convert two line numbers and assign them to an index zone (zones are 1-3)
+    IndexZoneSetLines {
+        /// Path to the indexed document
+        file: PathBuf,
+        /// Registry index value
+        registry_index: u64,
+        /// Defined zone slot, user-facing 1-3
+        zone: usize,
+        /// Two line numbers plus an optional inline p/b/m/d type token and clip/c suffix
+        #[arg(value_name = "VALUE", num_args = 2..)]
+        values: Vec<String>,
+        /// Default zone type when no inline type token is supplied
+        #[arg(short = 't', long, default_value = "markdown")]
+        zone_type: String,
+    },
+
     /// Show current native Regedited state as JSON
     State {
         /// Path to the markdown file
@@ -454,6 +476,27 @@ enum Commands {
         state: PathBuf,
     },
 
+    /// Check committed zone fingerprints and write a temporary relocation diff
+    Check {
+        /// Path to the indexed document
+        file: PathBuf,
+    },
+
+    /// Save one zone checkpoint, or check and optionally pull safe range relocations
+    Commit {
+        /// Path to the indexed document
+        file: PathBuf,
+        /// Pull safe relocations without an interactive prompt
+        #[arg(long)]
+        pull: bool,
+    },
+
+    /// Apply the latest guarded zone relocation diff
+    Pull {
+        /// Path to the indexed document
+        file: PathBuf,
+    },
+
     /// Restore the last one-step undo copy
     Undo {
         /// Path to the markdown file
@@ -464,9 +507,11 @@ enum Commands {
     Grep {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Zone index (0-2)
+        #[arg(value_name = "ZONE")]
         index: usize,
     },
 
@@ -474,9 +519,11 @@ enum Commands {
     Clip {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// String index (0-2)
+        #[arg(value_name = "STRING")]
         index: usize,
     },
 
@@ -484,9 +531,11 @@ enum Commands {
     Echo {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// String index (0-2)
+        #[arg(value_name = "STRING")]
         index: usize,
     },
 
@@ -509,9 +558,11 @@ enum Commands {
     SetNum {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Value index (0-8)
+        #[arg(value_name = "SLOT")]
         index: usize,
         /// New value
         value: i64,
@@ -521,9 +572,11 @@ enum Commands {
     SetStr {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// String index (0-2)
+        #[arg(value_name = "STRING")]
         index: usize,
         /// New value
         value: String,
@@ -533,9 +586,11 @@ enum Commands {
     SetZone {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Zone index (0-2)
+        #[arg(value_name = "ZONE")]
         index: usize,
         /// Start line
         start: u32,
@@ -546,7 +601,7 @@ enum Commands {
         zone_type: String,
     },
 
-    /// Convert one to six line numbers to compact hex-words
+    /// Convert line numbers to hex-words or assign one pair to an index zone
     Convert {
         /// Line numbers plus optional inline p/b/m/d type tokens and clip/c suffix
         #[arg(value_name = "VALUE", num_args = 1..)]
@@ -562,11 +617,12 @@ enum Commands {
     /// List all zone types and their hex nibble values
     Types,
 
-    /// Show section content (markdown between --- and next section)
+    /// Show index content (between --- and the next index)
     Content {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
     },
 
@@ -588,19 +644,20 @@ enum Commands {
         title: String,
     },
 
-    /// Add a new section
+    /// Add a new canonical index
     Add {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
-        section: String,
+        /// New numeric registry index
+        registry_index: u64,
     },
 
-    /// Remove a section
+    /// Remove an index
     Rm {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
     },
 
@@ -610,7 +667,7 @@ enum Commands {
         file: PathBuf,
     },
 
-    /// Show full document info (all sections with details)
+    /// Show full document info (all indexes with details)
     Info {
         /// Path to the markdown file
         file: PathBuf,
@@ -661,7 +718,8 @@ enum Commands {
     BoolAnd {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name (or "__all__" for entire file)
+        /// Index reference (or "__all__" for the entire file)
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Patterns to match (ALL must be found)
         patterns: Vec<String>,
@@ -671,7 +729,8 @@ enum Commands {
     BoolNand {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name (or "__all__" for entire file)
+        /// Index reference (or "__all__" for the entire file)
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Pattern that must be found
         must_contain: String,
@@ -683,7 +742,8 @@ enum Commands {
     BoolOr {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name (or "__all__" for entire file)
+        /// Index reference (or "__all__" for the entire file)
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Patterns to match (ANY must be found)
         patterns: Vec<String>,
@@ -693,7 +753,8 @@ enum Commands {
     BoolXor {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name (or "__all__" for entire file)
+        /// Index reference (or "__all__" for the entire file)
+        #[arg(value_name = "INDEX")]
         section: String,
         /// First pattern
         pattern_a: String,
@@ -705,7 +766,8 @@ enum Commands {
     Count {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name (or "__all__" for entire file)
+        /// Index reference (or "__all__" for the entire file)
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Pattern to count
         pattern: String,
@@ -715,7 +777,8 @@ enum Commands {
     IfContains {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name (or "__all__" for entire file)
+        /// Index reference (or "__all__" for the entire file)
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Pattern to check for
         pattern: String,
@@ -785,9 +848,11 @@ enum Commands {
     ClipZone {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Zone index (0, 1, or 2)
+        #[arg(value_name = "ZONE")]
         zone: usize,
     },
 
@@ -795,9 +860,11 @@ enum Commands {
     ClipDb {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
         /// Value index (0-8)
+        #[arg(value_name = "SLOT")]
         index: usize,
     },
 
@@ -805,7 +872,8 @@ enum Commands {
     ClipDbline {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
     },
 
@@ -814,7 +882,8 @@ enum Commands {
     ClipHexline {
         /// Path to the markdown file
         file: PathBuf,
-        /// Section name
+        /// Index reference
+        #[arg(value_name = "INDEX")]
         section: String,
     },
 
@@ -880,6 +949,9 @@ fn run_main() {
         regedited::qol::normalize_short_command(&mut args);
         regedited::qol::normalize_compact_refs(&mut args);
         regedited::qol::normalize_short_clip_flag(&mut args);
+        if let Err(error) = regedited::qol::normalize_convert_destination(&mut args) {
+            clap::Error::raw(ErrorKind::InvalidValue, error).exit();
+        }
     }
 
     if handle_example_request(&args) {
@@ -1025,12 +1097,16 @@ fn parse_cli(args: Vec<OsString>, short_mode: bool) -> Cli {
 }
 
 fn handle_help_request(args: &[OsString], short_mode: bool) -> bool {
+    let example_mode = args
+        .iter()
+        .skip(2)
+        .any(|value| matches!(value.to_str(), Some("-e" | "--examples")));
     let top_level_help = args.len() == 1
         || args
             .get(1)
             .is_some_and(|value| matches!(value.to_str(), Some("-h" | "--help" | "-help")));
     if top_level_help {
-        print_top_level_help(short_mode);
+        print_top_level_help(short_mode, example_mode);
         return true;
     }
 
@@ -1043,7 +1119,7 @@ fn handle_help_request(args: &[OsString], short_mode: bool) -> bool {
             };
             print_command_help(canonical, short_mode);
         } else {
-            print_top_level_help(short_mode);
+            print_top_level_help(short_mode, false);
         }
         return true;
     }
@@ -1056,62 +1132,311 @@ fn handle_help_request(args: &[OsString], short_mode: bool) -> bool {
         if let Some(command) = args.get(1).and_then(|value| value.to_str()) {
             print_command_help(command, short_mode);
         } else {
-            print_top_level_help(short_mode);
+            print_top_level_help(short_mode, false);
         }
         return true;
     }
     false
 }
 
-fn print_top_level_help(short_mode: bool) {
+fn print_top_level_help(short_mode: bool, example_mode: bool) {
     let root = Cli::command();
     let loaded = regedited::qol::read_loaded_path().ok().flatten();
-
-    if short_mode {
-        println!("rgd - concise Regedited command surface");
-        println!("Usage: rgd <COMMAND> [ARGS] [OPTIONS]");
-        println!("Binary: same executable payload as regedited");
-        match loaded {
-            Some(path) => println!("Loaded document: {}", path.display()),
-            None => println!("Loaded document: none (run `rgd load <file>`)"),
-        }
-        println!("\nCommands:");
-    } else {
-        println!("regedited - Fast plaintext parse-ment database");
-        println!("Usage: regedited <COMMAND> [ARGS] [OPTIONS]");
-        println!("\nCommands (each line includes its rgd shorthand and runtime usage):");
-    }
-
-    for alias in regedited::qol::COMMAND_ALIASES {
-        let Some(subcommand) = root.find_subcommand(alias.canonical) else {
-            continue;
-        };
-        let description = subcommand
-            .get_about()
-            .map(ToString::to_string)
-            .unwrap_or_default();
-        let mut command = subcommand.clone();
-        command.set_bin_name(format!("regedited {}", alias.canonical));
-        let usage = command.render_usage().to_string().replace("Usage: ", "");
-        if short_mode {
-            println!(
-                "  {:<5} {:<23} {} | {}",
-                alias.short, alias.canonical, description, usage
-            );
+    let program = if short_mode { "rgd" } else { "regedited" };
+    println!("{} - Fast indexed plaintext operations", program);
+    println!("Usage: {} <COMMAND> [ARGS] [OPTIONS]", program);
+    println!(
+        "View: {}  (apply `-e` after `--help` for advanced examples)",
+        if example_mode {
+            "advanced examples"
         } else {
-            println!(
-                "  {:<23} [rgd: {:<5}] {} | {}",
-                alias.canonical, alias.short, description, usage
-            );
+            "command syntax"
+        }
+    );
+    if short_mode {
+        match loaded {
+            Some(path) => println!("Loaded: {}", path.display()),
+            None => println!("Loaded: none (`rgd load <FILE>`)"),
+        }
+    }
+    println!("Index refs: 64 = i64 = index:64; legacy names remain accepted.\n");
+    if short_mode {
+        println!("Line -> zone: rgd cv <p|b|m|d> <START> <END> to i<INDEX> <ZONE 1-3>");
+    } else {
+        println!(
+            "Line -> zone: regedited index-zone-set-lines <FILE> <INDEX> <ZONE 1-3> <p|b|m|d> <START> <END>"
+        );
+    }
+    println!();
+    print_help_row(
+        "RGD",
+        "COMMAND",
+        if example_mode {
+            "ADVANCED EXAMPLE"
+        } else {
+            "ARGUMENTS"
+        },
+        "PURPOSE",
+    );
+    println!("  {:-<4} {:-<22} {:-<50} {:-<35}", "", "", "", "");
+
+    for category in HELP_CATEGORIES {
+        println!("\n[{}]", category);
+        for alias in regedited::qol::COMMAND_ALIASES
+            .iter()
+            .filter(|alias| help_category(alias.canonical) == *category)
+        {
+            let Some(subcommand) = root.find_subcommand(alias.canonical) else {
+                continue;
+            };
+            let details = if example_mode {
+                help_example(alias.canonical, alias.short, short_mode)
+            } else {
+                help_arguments(subcommand, alias.canonical, alias.short, short_mode)
+            };
+            let description = subcommand
+                .get_about()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            print_help_row(alias.short, alias.canonical, &details, &description);
         }
     }
 
+    println!("\nTop-level examples: `{} --help -e`", program);
+    println!("Command detail: `<command> -help`");
+    println!("Shell guides: `regedited -ex <powershell|repl|python|bash|bat>`");
     if short_mode {
-        println!("\nContext: rgd load <FILE> | rgd load | rgd unload");
-        println!("Refs: i38, i38s1, i38db7, i38dbl, i38hl, i38r1, i38zh1");
+        println!("Context: `rgd load <FILE>` | `rgd load` | `rgd unload`");
     }
-    println!("\nUse `<command> -help` for command-local arguments and flags.");
-    println!("Use `regedited -ex <environment>` for categorized examples.");
+}
+
+fn print_help_row(short: &str, command: &str, details: &str, purpose: &str) {
+    let details = wrap_help_cell(details, 50);
+    let purpose = wrap_help_cell(purpose, 35);
+    let rows = details.len().max(purpose.len());
+    for row in 0..rows {
+        println!(
+            "  {:<4} {:<22} {:<50} {}",
+            if row == 0 { short } else { "" },
+            if row == 0 { command } else { "" },
+            details.get(row).map(String::as_str).unwrap_or(""),
+            purpose.get(row).map(String::as_str).unwrap_or("")
+        );
+    }
+}
+
+fn wrap_help_cell(value: &str, width: usize) -> Vec<String> {
+    if value.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in value.split_whitespace() {
+        let added = usize::from(!line.is_empty()) + word.len();
+        if !line.is_empty() && line.len() + added > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+const HELP_CATEGORIES: &[&str] = &[
+    "INDEXES & DOCUMENT",
+    "VALUES & REFERENCES",
+    "ZONES & LINE RANGES",
+    "SEARCH & BOOLEAN",
+    "CHECKPOINTS & SAFETY",
+    "CLIPBOARD & OUTPUT",
+    "STRUCTURE & UTILITIES",
+    "RUNTIME & INTEGRATION",
+];
+
+fn help_category(command: &str) -> &'static str {
+    match command {
+        "list" | "scan" | "summary" | "info" | "db" | "hexline" | "content" | "index-str-list"
+        | "resolve-index" | "add" | "rm" => "INDEXES & DOCUMENT",
+        "ref-get" | "ref-set" | "ref-copy" | "ref-diff" | "ref-bool" | "set-num" | "set-str" => {
+            "VALUES & REFERENCES"
+        }
+        "zone-copy"
+        | "zone-append"
+        | "zone-replace"
+        | "zone-extract"
+        | "zone-info"
+        | "index-zone-extract"
+        | "index-zone-replace"
+        | "index-zone-copy"
+        | "index-zone-transfer"
+        | "index-zone-set-hex"
+        | "index-zone-set-lines"
+        | "set-zone"
+        | "hex-extract"
+        | "hex-replace"
+        | "lines"
+        | "convert"
+        | "types" => "ZONES & LINE RANGES",
+        "fgrep" | "fgrep-multi" | "grep" | "bool-and" | "bool-nand" | "bool-or" | "bool-xor"
+        | "count" | "if-contains" => "SEARCH & BOOLEAN",
+        "diff" | "replace" | "state" | "state-compare" | "check" | "commit" | "pull" | "undo"
+        | "wal" | "wal-replay" | "tx" => "CHECKPOINTS & SAFETY",
+        "clip" | "echo" | "echo-direct" | "clip-zone" | "clip-db" | "clip-dbline"
+        | "clip-hexline" | "clip-hexword" => "CLIPBOARD & OUTPUT",
+        "getutf" | "new" | "encap" | "grab-html" | "schema" | "reg-types" | "reg-parse" => {
+            "STRUCTURE & UTILITIES"
+        }
+        "serve" => "RUNTIME & INTEGRATION",
+        _ => "STRUCTURE & UTILITIES",
+    }
+}
+
+fn help_arguments(
+    subcommand: &clap::Command,
+    canonical: &str,
+    short: &str,
+    short_mode: bool,
+) -> String {
+    let mut command = subcommand.clone();
+    let invocation = if short_mode {
+        format!("rgd {}", short)
+    } else {
+        format!("regedited {}", canonical)
+    };
+    command.set_bin_name(invocation.clone());
+    let usage = command.render_usage().to_string().replace("Usage: ", "");
+    let mut arguments = usage
+        .strip_prefix(&invocation)
+        .unwrap_or(&usage)
+        .trim()
+        .to_string();
+    if short_mode
+        && regedited::qol::file_placement(canonical) != regedited::qol::FilePlacement::None
+    {
+        arguments = arguments.replacen("<FILE>", "[FILE]", 1);
+    }
+    arguments
+}
+
+fn help_example(command: &str, short: &str, short_mode: bool) -> String {
+    let call = if short_mode {
+        format!("rgd {}", short)
+    } else {
+        format!("regedited {}", command)
+    };
+    let doc = |arguments: &str| {
+        if short_mode {
+            format!("{}{}", call, arguments)
+        } else {
+            format!("{} $DOC{}", call, arguments)
+        }
+    };
+
+    match command {
+        "list" => doc(""),
+        "db" => doc(" i64"),
+        "hexline" => doc(" index:64"),
+        "scan" => doc(" --filter Client"),
+        "diff" => format!("{} $BASE $EDITED", call),
+        "replace" => format!("{} $TARGET $SOURCE --output $OUT", call),
+        "fgrep" => doc(" \"closing date\" --index i64"),
+        "fgrep-multi" => doc(" waterfront inspection financing"),
+        "zone-copy" => doc(" --from i64 --from-zone 0 --to i70 --to-zone 1"),
+        "zone-append" => doc(" i64 0 --text \"new line\""),
+        "zone-replace" => doc(" i64 1 --text \"replacement\""),
+        "zone-extract" => doc(" i64 1"),
+        "zone-info" => doc(" i64 1"),
+        "resolve-index" => doc(" 64"),
+        "index-zone-extract" => doc(" 64 0"),
+        "index-zone-replace" => doc(" 64 0 --text \"replacement\""),
+        "index-zone-copy" => doc(" --from-index 64 --from-zone 0 --to-index 70 --to-zone 1"),
+        "index-zone-transfer" => format!(
+            "{} --from-file $A --from-index 64 --to-file $B --to-index 70",
+            call
+        ),
+        "hex-extract" => doc(" 1x0000055 1x000005F"),
+        "hex-replace" => doc(" 1x0000055 1x000005F --text \"replacement\""),
+        "ref-get" => doc(if short_mode {
+            " i64s2 c"
+        } else {
+            " i64s2 --clip"
+        }),
+        "ref-set" => doc(" i64s2 --text \"ready\""),
+        "ref-copy" => doc(" i64s1 i70s2 --append"),
+        "ref-diff" => doc(" i64db1 i70db2"),
+        "ref-bool" => doc(" i64db7 gte 8 --then-val READY --else-val WAIT"),
+        "index-str-list" => doc(" 64"),
+        "index-zone-set-hex" => doc(" 64 1 1x0000055 1x000005F"),
+        "index-zone-set-lines" => doc(" 64 1 b 85 95"),
+        "state" => doc(""),
+        "state-compare" => doc(" $STATE_JSON"),
+        "check" => doc(""),
+        "commit" => doc(" --pull"),
+        "pull" => doc(""),
+        "undo" => doc(""),
+        "grep" => doc(" i64 0"),
+        "clip" => doc(" i64 1"),
+        "echo" => doc(" i64 1"),
+        "echo-direct" => format!("{} \"A&B|C\"", call),
+        "getutf" => format!("{} 128640", call),
+        "set-num" => doc(" i64 6 15"),
+        "set-str" => doc(" i64 1 \"follow up Friday\""),
+        "set-zone" => doc(" i64 0 85 95 --zone-type code"),
+        "convert" => {
+            if short_mode {
+                "rgd cv b 85 95 to i64 1".to_string()
+            } else {
+                "regedited index-zone-set-lines $DOC 64 1 b 85 95".to_string()
+            }
+        }
+        "types" => call,
+        "content" => doc(" i64"),
+        "lines" => doc(" 85 95"),
+        "new" => format!("{} notes.md \"Indexed notes\"", call),
+        "add" => doc(" 900"),
+        "rm" => doc(" i900"),
+        "summary" => doc(""),
+        "info" => doc(""),
+        "encap" => format!("{} \"value\" --mode d", call),
+        "grab-html" => format!("{} page.html href --tag a --numbered", call),
+        "bool-and" => doc(" i64 waterfront inspection"),
+        "bool-nand" => doc(" i64 active archived"),
+        "bool-or" => doc(" i64 cash financing"),
+        "bool-xor" => doc(" i64 buyer seller"),
+        "count" => doc(" i64 \"follow up\""),
+        "if-contains" => doc(" i64 waterfront --then-val HOT --else-val COLD"),
+        "wal" => doc(""),
+        "wal-replay" => doc(" --apply"),
+        "tx" => {
+            if short_mode {
+                format!("{} status", call)
+            } else {
+                format!("{} status $DOC", call)
+            }
+        }
+        "schema" => doc(" --validate"),
+        "reg-types" => call,
+        "reg-parse" => format!("{} 42 --reg-type REG_DWORD", call),
+        "clip-zone" => doc(" i64 0"),
+        "clip-db" => doc(" i64 6"),
+        "clip-dbline" => doc(" i64"),
+        "clip-hexline" => doc(" i64"),
+        "clip-hexword" => format!("{} 85 95 --zone-type code", call),
+        "serve" => {
+            if short_mode {
+                format!("{} --port 5000", call)
+            } else {
+                format!("{} --file $DOC --port 5000", call)
+            }
+        }
+        _ => call,
+    }
 }
 
 fn print_command_help(command_name: &str, short_mode: bool) {
@@ -1306,8 +1631,18 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             start,
             end,
         } => cmd_index_zone_set_hex(&file, registry_index, zone, &start, &end),
+        Commands::IndexZoneSetLines {
+            file,
+            registry_index,
+            zone,
+            values,
+            zone_type,
+        } => cmd_index_zone_set_lines(&file, registry_index, zone, &values, &zone_type, config),
         Commands::State { file } => cmd_state(&file),
         Commands::StateCompare { file, state } => cmd_state_compare(&file, &state),
+        Commands::Check { file } => cmd_zone_check(&file),
+        Commands::Commit { file, pull } => cmd_zone_commit(&file, pull),
+        Commands::Pull { file } => cmd_zone_pull(&file),
         Commands::Undo { file } => cmd_undo(&file),
         Commands::Grep {
             file,
@@ -1355,7 +1690,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Lines { file, start, end } => cmd_lines(&file, start, end),
         Commands::Getutf { number, decode } => cmd_getutf(number, decode),
         Commands::New { file, title } => cmd_new(&file, &title),
-        Commands::Add { file, section } => cmd_add(&file, &section, config),
+        Commands::Add {
+            file,
+            registry_index,
+        } => cmd_add(&file, registry_index, config),
         Commands::Rm { file, section } => cmd_rm(&file, &section, config),
         Commands::Summary { file } => cmd_summary(&file),
         Commands::Info { file } => cmd_info(&file),
@@ -1445,28 +1783,30 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
 // ==================== COMMAND IMPLEMENTATIONS ====================
 
-fn cmd_list(file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let mmap = regedited::MmapFile::open(file)?;
-    let names = quick_scan_names(mmap.as_str());
+fn cmd_list(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let indexes = regedited::fast_ops::fast_scan(file)?;
 
-    if names.is_empty() {
-        println!("{} No sections found", "Note:".yellow());
+    if indexes.is_empty() {
+        println!("{} No indexes found", "Note:".yellow());
         return Ok(());
     }
 
     println!(
-        "{} {} sections in {}",
-        "Sections:".green().bold(),
-        names.len(),
+        "{} {} indexes in {}",
+        "Indexes:".green().bold(),
+        indexes.len(),
         file.display()
     );
 
-    for (name, line) in names {
+    for section in indexes {
+        let canonical = format!("index:{}", section.index);
+        let legacy = (section.name != canonical).then(|| format!(" legacy={}", section.name));
         println!(
-            "  {} {} (header @ line {})",
-            "-".cyan(),
-            name.bold(),
-            line.to_string().dimmed()
+            "  {:>8}  {:<12} header={}{}",
+            section.index.to_string().cyan().bold(),
+            format!("i{}", section.index),
+            section.header_line,
+            legacy.unwrap_or_default()
         );
     }
 
@@ -1770,17 +2110,17 @@ fn cmd_new(file: &PathBuf, title: &str) -> Result<(), Box<dyn std::error::Error>
 
 fn cmd_add(
     file: &PathBuf,
-    section: &str,
+    registry_index: u64,
     config: StoreConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut store = Store::open_with_config(file, config)?;
 
-    store.add_section(section)?;
+    store.add_index(registry_index)?;
 
     println!(
-        "{} Added section '{}' to {}",
+        "{} Added index {} to {}",
         "OK".green().bold(),
-        section.cyan(),
+        registry_index.to_string().cyan(),
         file.display()
     );
 
@@ -1797,7 +2137,7 @@ fn cmd_rm(
     store.remove_section(section)?;
 
     println!(
-        "{} Removed section '{}' from {}",
+        "{} Removed index '{}' from {}",
         "OK".green().bold(),
         section.cyan(),
         file.display()
@@ -1820,13 +2160,20 @@ fn cmd_info(file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("{}", "Document Information".green().bold());
     println!("  File: {}", file.display());
-    println!("  Sections: {}", header.section_count());
+    println!("  Indexes: {}", header.section_count());
     println!("  Total lines: {}", header.total_lines);
     println!("  Total bytes: {}", header.total_bytes);
     println!();
 
     for (name, info) in &header.sections {
-        println!("{}", format!("Index: {}", name).cyan().bold());
+        let identity = info
+            .registry_index
+            .map(|index| index.to_string())
+            .unwrap_or_else(|| "unresolved".to_string());
+        println!("{}", format!("Index: {}", identity).cyan().bold());
+        if name != &format!("index:{}", identity) {
+            println!("  Legacy key: {}", name);
+        }
         println!("  Header @ line {}", info.header_line);
         println!("  Index @ line {}", info.header_line + 1);
         println!("  Hex-word line @ line {}", info.ascii_line);
@@ -1857,12 +2204,12 @@ fn cmd_scan(
     let scanned = fast_scan(file)?;
 
     if scanned.is_empty() {
-        println!("{} No sections found", "Note:".yellow());
+        println!("{} No indexes found", "Note:".yellow());
         return Ok(());
     }
 
     println!(
-        "{} {} sections in {} (safetensors-style header scan)",
+        "{} {} indexes in {}",
         "Scan:".green().bold(),
         scanned.len(),
         file.display()
@@ -1872,7 +2219,7 @@ fn cmd_scan(
     let by_name: Vec<&regedited::fast_ops::ScannedSection> = match filter {
         Some(ref pat) => {
             let r = filter_by_name(&scanned, pat);
-            println!("  Name filter '{}': {} matches", pat.cyan(), r.len());
+            println!("  Index/key filter '{}': {} matches", pat.cyan(), r.len());
             r
         }
         None => scanned.iter().collect(),
@@ -2050,14 +2397,8 @@ fn cmd_zone_copy(
     let content = std::fs::read_to_string(file)?;
     let header = scan_content(&content)?;
 
-    let from_sec = header
-        .get_section(from)
-        .or_else(|| header.get_section_case_insensitive(from))
-        .ok_or_else(|| format!("Source section '{}' not found", from))?;
-    let to_sec = header
-        .get_section(to)
-        .or_else(|| header.get_section_case_insensitive(to))
-        .ok_or_else(|| format!("Target section '{}' not found", to))?;
+    let from_sec = header.resolve_section(from)?;
+    let to_sec = header.resolve_section(to)?;
 
     let result = copy_zone_content(&content, from_sec, from_zone, to_sec, to_zone)?;
     write_file_with_undo(file, result)?;
@@ -2097,10 +2438,7 @@ fn cmd_zone_append(
     let content = std::fs::read_to_string(file)?;
     let header = scan_content(&content)?;
 
-    let sec = header
-        .get_section(section)
-        .or_else(|| header.get_section_case_insensitive(section))
-        .ok_or_else(|| format!("Section '{}' not found", section))?;
+    let sec = header.resolve_section(section)?;
 
     let result = append_zone_content(&content, sec, zone, &append_text)?;
     write_file_with_undo(file, result)?;
@@ -2139,10 +2477,7 @@ fn cmd_zone_replace(
     let content = std::fs::read_to_string(file)?;
     let header = scan_content(&content)?;
 
-    let sec = header
-        .get_section(section)
-        .or_else(|| header.get_section_case_insensitive(section))
-        .ok_or_else(|| format!("Section '{}' not found", section))?;
+    let sec = header.resolve_section(section)?;
 
     let result = replace_zone_content(&content, sec, zone, &replace_text)?;
     write_file_with_undo(file, result)?;
@@ -2170,10 +2505,7 @@ fn cmd_zone_extract(
     let content = std::fs::read_to_string(file)?;
     let header = scan_content(&content)?;
 
-    let sec = header
-        .get_section(section)
-        .or_else(|| header.get_section_case_insensitive(section))
-        .ok_or_else(|| format!("Section '{}' not found", section))?;
+    let sec = header.resolve_section(section)?;
 
     let extracted = extract_zone_content(&content, sec, zone)?;
 
@@ -2194,10 +2526,7 @@ fn cmd_zone_info(
     let content = std::fs::read_to_string(file)?;
     let header = scan_content(&content)?;
 
-    let sec = header
-        .get_section(section)
-        .or_else(|| header.get_section_case_insensitive(section))
-        .ok_or_else(|| format!("Section '{}' not found", section))?;
+    let sec = header.resolve_section(section)?;
 
     let info = format_zone_info(&content, sec, zone)?;
     println!("{}", info);
@@ -3229,6 +3558,44 @@ fn cmd_index_zone_set_hex(
     Ok(())
 }
 
+fn cmd_index_zone_set_lines(
+    file: &PathBuf,
+    registry_index: u64,
+    zone: usize,
+    values: &[String],
+    zone_type: &str,
+    config: StoreConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let zone_slot = parse_user_slot(&zone.to_string(), 3, "zone")?;
+    let assignment = regedited::converter::parse_zone_assignment(values, zone_type)?;
+    let section = resolve_section_name_by_index(file, registry_index)?;
+    let mut store = Store::open_with_config(file, config)?;
+    store.update_zone(
+        &section,
+        zone_slot,
+        assignment.start,
+        assignment.end,
+        assignment.zone_type,
+    )?;
+
+    let start_hex = regedited::zone_type::encode_hex_word(assignment.start, assignment.zone_type);
+    let end_hex = regedited::zone_type::encode_hex_word(assignment.end, assignment.zone_type);
+    if assignment.clip {
+        regedited::clip::copy_to_clipboard(&format!("{} : {}", start_hex, end_hex))?;
+    }
+    println!(
+        "{} set index {} zone {} to {} : {} (lines {}-{})",
+        "OK".green().bold(),
+        registry_index,
+        zone,
+        start_hex,
+        end_hex,
+        assignment.start,
+        assignment.end
+    );
+    Ok(())
+}
+
 fn make_state(file: &PathBuf) -> Result<NativeState, Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(file)?;
     let scan = regedited::fast_ops::fast_scan(file)?;
@@ -3362,6 +3729,157 @@ fn cmd_state_compare(file: &PathBuf, state: &PathBuf) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+fn print_zone_diff(diff: &regedited::zone_checkpoint::ZoneDiff, path: &Path) {
+    for update in &diff.updates {
+        println!(
+            "move index {} zone {}: {}-{} -> {}-{} ({})",
+            update.index,
+            update.slot,
+            update.old_start,
+            update.old_end,
+            update.new_start,
+            update.new_end,
+            update.method
+        );
+    }
+    for item in &diff.manual {
+        println!(
+            "manual index {} zone {}: {}",
+            item.index, item.slot, item.reason
+        );
+    }
+    for item in &diff.unresolved {
+        println!(
+            "unresolved index {} zone {}: {}",
+            item.index, item.slot, item.reason
+        );
+    }
+    for item in &diff.content_changed {
+        println!(
+            "content index {} zone {}: {}",
+            item.index, item.slot, item.reason
+        );
+    }
+    if !diff.added_indexes.is_empty() {
+        println!("added indexes: {:?}", diff.added_indexes);
+    }
+    println!(
+        "updates={} manual={} unresolved={} content_changed={}",
+        diff.updates.len(),
+        diff.manual.len(),
+        diff.unresolved.len(),
+        diff.content_changed.len()
+    );
+    println!("diff={}", path.display());
+}
+
+fn cmd_zone_check(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let (diff, path) = regedited::zone_checkpoint::check(file)?;
+    print_zone_diff(&diff, &path);
+    Ok(())
+}
+
+fn prompt_pull(count: usize) -> Result<bool, Box<dyn std::error::Error>> {
+    use std::io::{IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return Ok(false);
+    }
+    print!("Pull {} safe range update(s) now? [y/N] ", count);
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+fn write_pulled_zones(
+    file: &Path,
+    diff: &regedited::zone_checkpoint::ZoneDiff,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let updated = regedited::zone_checkpoint::apply_diff(file, diff)?;
+    write_file_with_undo(&file.to_path_buf(), updated)?;
+    println!(
+        "{} pulled {} zone range(s)",
+        "OK".green().bold(),
+        diff.updates.len()
+    );
+
+    if diff.unresolved.is_empty() {
+        let (checkpoint, path) = regedited::zone_checkpoint::save_checkpoint(file)?;
+        regedited::zone_checkpoint::clear_diff(file)?;
+        println!(
+            "{} committed {} active zone(s) to {}",
+            "OK".green().bold(),
+            checkpoint.zones.len(),
+            path.display()
+        );
+    } else {
+        regedited::zone_checkpoint::save_checkpoint_preserving(file, &diff.unresolved)?;
+        let (_, path) = regedited::zone_checkpoint::check(file)?;
+        println!(
+            "Checkpoint advanced; preserved {} unresolved zone fingerprint(s) in {}",
+            diff.unresolved.len(),
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn cmd_zone_commit(file: &Path, pull: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if !regedited::zone_checkpoint::checkpoint_exists(file) {
+        let (checkpoint, path) = regedited::zone_checkpoint::save_checkpoint(file)?;
+        println!(
+            "{} committed {} active zone(s) to {}",
+            "OK".green().bold(),
+            checkpoint.zones.len(),
+            path.display()
+        );
+        return Ok(());
+    }
+
+    let (diff, path) = regedited::zone_checkpoint::check(file)?;
+    print_zone_diff(&diff, &path);
+    if diff.updates.is_empty() {
+        if diff.unresolved.is_empty() {
+            let (checkpoint, checkpoint_path) = regedited::zone_checkpoint::save_checkpoint(file)?;
+            regedited::zone_checkpoint::clear_diff(file)?;
+            println!(
+                "{} committed {} active zone(s) to {}",
+                "OK".green().bold(),
+                checkpoint.zones.len(),
+                checkpoint_path.display()
+            );
+        } else {
+            println!(
+                "Checkpoint unchanged: resolve {} ambiguous zone(s), then commit again.",
+                diff.unresolved.len()
+            );
+        }
+        return Ok(());
+    }
+
+    if pull || prompt_pull(diff.updates.len())? {
+        write_pulled_zones(file, &diff)?;
+    } else {
+        println!(
+            "Checkpoint unchanged. Run `rgd pull` to apply {}.",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn cmd_zone_pull(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let diff = regedited::zone_checkpoint::load_diff(file)?;
+    if diff.updates.is_empty() {
+        println!("No safe zone relocations are pending.");
+        return Ok(());
+    }
+    write_pulled_zones(file, &diff)
+}
+
 // ==================== ENCAPSULATION COMMANDS (shel.sh/XML) ====================
 
 fn cmd_encap(
@@ -3475,10 +3993,7 @@ fn get_bool_content(file: &PathBuf, section: &str) -> Result<String, Box<dyn std
         Ok(content)
     } else {
         let header = scan_content(&content)?;
-        let sec = header
-            .get_section(section)
-            .or_else(|| header.get_section_case_insensitive(section))
-            .ok_or_else(|| format!("Section '{}' not found", section))?;
+        let sec = header.resolve_section(section)?;
 
         // Extract section content
         let lines: Vec<&str> = content.lines().collect();
@@ -3802,8 +4317,12 @@ fn cmd_schema(
         let header = regedited::header::scan_content(&content)?;
 
         let mut schema = DocumentSchema::new();
-        for name in header.sections.keys() {
-            let sec = schema.section(name);
+        for info in header.sections.values() {
+            let index_ref = info
+                .registry_index
+                .map(|index| index.to_string())
+                .unwrap_or_else(|| info.name.clone());
+            let sec = schema.section(&index_ref);
             // Add default fields
             sec.add_field(regedited::schema::SchemaField::new(
                 "description",
@@ -3849,7 +4368,7 @@ fn cmd_schema(
 
         let mut total_errors = 0;
         for (sec_name, sec_schema) in &schema.sections {
-            if let Some(info) = header.get_section(sec_name) {
+            if let Ok(info) = header.resolve_section(sec_name) {
                 // Build values map from the section
                 let mut values = std::collections::BTreeMap::new();
 
@@ -3877,7 +4396,7 @@ fn cmd_schema(
                     }
                 }
             } else {
-                println!("  [{}] Section not found in document", sec_name.yellow());
+                println!("  [{}] Index not found in document", sec_name.yellow());
             }
         }
 
@@ -3967,7 +4486,7 @@ fn cmd_serve(file: &Path, port: u16, read_only: bool) -> Result<(), Box<dyn std:
     println!();
     println!("  Endpoints:");
     println!("    GET  /              — Status + section list");
-    println!("    GET  /sections      — All sections");
+    println!("    GET  /sections      — All indexes (legacy route name)");
     println!("    GET  /section/{{name}}     — Section metadata");
     println!("    GET  /section/{{name}}/db  — Database table");
     println!("    GET  /section/{{name}}/hexline — Hex-word line");
@@ -4001,10 +4520,7 @@ fn cmd_clip_zone(
 
     let content = std::fs::read_to_string(file)?;
     let header = scan_content(&content)?;
-    let sec = header
-        .get_section(section)
-        .or_else(|| header.get_section_case_insensitive(section))
-        .ok_or_else(|| format!("Section '{}' not found", section))?;
+    let sec = header.resolve_section(section)?;
 
     let clipped = clip_zone_content(&content, sec, zone)?;
     println!(
@@ -4032,10 +4548,7 @@ fn cmd_clip_db(
 
     let content = std::fs::read_to_string(file)?;
     let header = scan_content(&content)?;
-    let sec = header
-        .get_section(section)
-        .or_else(|| header.get_section_case_insensitive(section))
-        .ok_or_else(|| format!("Section '{}' not found", section))?;
+    let sec = header.resolve_section(section)?;
 
     let value = clip_db_value(&content, sec, index)?;
     println!(
@@ -4055,10 +4568,7 @@ fn cmd_clip_dbline(file: &PathBuf, section: &str) -> Result<(), Box<dyn std::err
 
     let content = std::fs::read_to_string(file)?;
     let header = scan_content(&content)?;
-    let sec = header
-        .get_section(section)
-        .or_else(|| header.get_section_case_insensitive(section))
-        .ok_or_else(|| format!("Section '{}' not found", section))?;
+    let sec = header.resolve_section(section)?;
 
     let line = clip_db_line(&content, sec)?;
     println!(
@@ -4077,10 +4587,7 @@ fn cmd_clip_ascii(file: &PathBuf, section: &str) -> Result<(), Box<dyn std::erro
 
     let content = std::fs::read_to_string(file)?;
     let header = scan_content(&content)?;
-    let sec = header
-        .get_section(section)
-        .or_else(|| header.get_section_case_insensitive(section))
-        .ok_or_else(|| format!("Section '{}' not found", section))?;
+    let sec = header.resolve_section(section)?;
 
     let ascii = clip_ascii_store(&content, sec)?;
     println!(

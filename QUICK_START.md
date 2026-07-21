@@ -79,7 +79,7 @@ name for the same compiled executable:
 Windows:
 
 ```powershell
-.\pathadd.ps1
+.\scripts\pathadd.ps1
 rgd load .\doc.md
 rgd l
 rgd ist 1
@@ -89,7 +89,7 @@ rgd unload
 Linux:
 
 ```bash
-./pathadd.sh
+bash ./scripts/pathadd.sh
 rgd load ./doc.md
 rgd l
 rgd ist 1
@@ -104,13 +104,13 @@ take precedence, and canonical `regedited` remains stateless.
 Windows:
 
 ```powershell
-.\webbuild.ps1
+.\scripts\webbuild.ps1
 ```
 
 Linux:
 
 ```bash
-./webbuild.sh
+bash ./scripts/webbuild.sh
 ```
 
 These scripts check for Rust and `wasm-pack`, ask before installing a missing
@@ -118,7 +118,7 @@ tool, and build the package under `web/pkg`. The browser surface is read-only.
 
 ## 6. Read More
 
-- `docs/RUST_BEGINNER_SETUP.txt` - slower first-time Rust setup
+- `docs/shell/RUST_BEGINNER_SETUP.txt` - slower first-time Rust setup
 - `docs/shell/POWERSHELL.txt` - PowerShell command cookbook
 - `docs/shell/BASH.txt` - Bash command cookbook
 - `docs/shell/PYTHON.txt` - Python subprocess cookbook
@@ -127,5 +127,5 @@ tool, and build the package under `web/pkg`. The browser surface is read-only.
 - `docs/web/JAVASCRIPT.txt` - browser runner and Wasm APIs
 - `docs/web/STANDALONE_HTML.txt` - static-page module layout
 - `docs/ARCHITECTURE.md` - full internals and command reference
-- `docs/FORMAT.md` - minimal document format
+- `README.md#document-layout` - canonical document format
 

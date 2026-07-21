@@ -1,5 +1,13 @@
 # Regedited Changelog
 
+# 2026-07-20 - QoL Update Part 3
+
+- Added diffing through the `commit` command. Set a whole file of registry indices, with maintained hexwords (1,2,3) and instantly reload after line numbers change rather than relying on the previous method of accomplishing this only via served instances.
+
+- Hardened `rgd` alias and .ps1 + .sh snippets for adding symlinks to the command properly.
+
+- Updated and sorted `help` menu to be much more QoL.
+
 # 2026-07-18 - QoL Update Part 2
 
 ### Added
