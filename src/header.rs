@@ -34,6 +34,8 @@ pub const CONTENT_SEPARATOR: &str = "---";
 pub struct SectionInfo {
     /// Section key (`index:<n>` for canonical triggers, section name for legacy `## SECTION:`)
     pub name: String,
+    /// Numeric identity read from the following `index:` line
+    pub registry_index: Option<u64>,
     /// Line number of the header (0-indexed)
     pub header_line: usize,
     /// Line number of the index number (header_line + 1)
@@ -62,12 +64,14 @@ impl SectionInfo {
     /// Create a new SectionInfo with computed fields
     pub fn new(
         name: String,
+        registry_index: Option<u64>,
         header_line: usize,
         header_byte_offset: usize,
         content_end: usize,
     ) -> Self {
         Self {
             name,
+            registry_index,
             header_line,
             index_line: header_line + 1,
             ascii_line: header_line + 2,
@@ -99,11 +103,18 @@ impl SectionInfo {
         self.content_end.saturating_sub(self.header_line) + 1
     }
 
+    /// Canonical identity for display and diagnostics.
+    pub fn index_label(&self) -> String {
+        self.registry_index
+            .map(|index| format!("index:{}", index))
+            .unwrap_or_else(|| self.name.clone())
+    }
+
     /// Format for display
     pub fn display(&self) -> String {
         format!(
             "  {0} (header @ line {1}, content lines {2}-{3}, {4} lines total)",
-            self.name,
+            self.index_label(),
             self.header_line,
             self.content_start,
             self.content_end,
@@ -115,7 +126,7 @@ impl SectionInfo {
 /// Document header containing all sections
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentHeader {
-    /// Ordered map of section name -> section info
+    /// Ordered map of internal layout key -> index info
     pub sections: BTreeMap<String, SectionInfo>,
     /// Total lines in the file
     pub total_lines: usize,
@@ -147,7 +158,30 @@ impl DocumentHeader {
             .map(|(_, v)| v)
     }
 
-    /// List all section names
+    /// Resolve a canonical numeric index reference, with legacy names as fallback.
+    pub fn resolve_section(&self, reference: &str) -> Result<&SectionInfo> {
+        if let Some(index) = parse_index_reference(reference) {
+            let mut matches = self
+                .sections
+                .values()
+                .filter(|section| section.registry_index == Some(index));
+            let first = matches.next();
+            if matches.next().is_some() {
+                return Err(RegeditedError::Parse(format!(
+                    "Registry index {} is ambiguous",
+                    index
+                )));
+            }
+            return first
+                .ok_or_else(|| RegeditedError::SectionNotFound(format!("index:{}", index)));
+        }
+
+        self.get_section(reference)
+            .or_else(|| self.get_section_case_insensitive(reference))
+            .ok_or_else(|| RegeditedError::SectionNotFound(reference.to_string()))
+    }
+
+    /// List all internal layout keys (legacy compatibility API)
     pub fn section_names(&self) -> Vec<&str> {
         self.sections.keys().map(|s| s.as_str()).collect()
     }
@@ -161,17 +195,19 @@ impl DocumentHeader {
     pub fn display(&self) -> String {
         let mut lines = vec![
             format!(
-                "Document: {0} sections, {1} lines, {2} bytes",
+                "Document: {0} indexes, {1} lines, {2} bytes",
                 self.section_count(),
                 self.total_lines,
                 self.total_bytes
             ),
-            "Sections:".to_string(),
+            "Indexes:".to_string(),
         ];
-        for (name, info) in &self.sections {
+        for info in self.sections.values() {
             lines.push(format!(
                 "  {0}: lines {1}-{2}",
-                name, info.header_line, info.content_end
+                info.index_label(),
+                info.header_line,
+                info.content_end
             ));
         }
         lines.join("\n")
@@ -205,7 +241,7 @@ pub fn scan_file<P: AsRef<Path>>(path: P) -> Result<DocumentHeader> {
 pub fn scan_content(content: &str) -> Result<DocumentHeader> {
     let total_bytes = content.len();
     let mut sections: BTreeMap<String, SectionInfo> = BTreeMap::new();
-    let mut current_header: Option<(String, usize, usize)> = None;
+    let mut current_header: Option<(String, Option<u64>, usize, usize)> = None;
     let mut trigger_counter: u64 = 0;
     let mut total_lines = 0usize;
     let mut byte_offset = 0usize;
@@ -215,15 +251,26 @@ pub fn scan_content(content: &str) -> Result<DocumentHeader> {
         let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
         let mut matched = false;
 
+        if let Some((_, registry_index, header_line, _)) = &mut current_header {
+            if line_num == *header_line + 1 {
+                *registry_index = parse_registry_index_line(line);
+            }
+        }
+
         // Check for compatible ## SECTION: header.
         if let Some(name) = parse_section_header(line) {
             matched = true;
-            if let Some((prev_name, prev_line, prev_byte)) = current_header.take() {
-                let info =
-                    SectionInfo::new(prev_name, prev_line, prev_byte, line_num.saturating_sub(1));
-                sections.insert(info.name.clone(), info);
+            if let Some((prev_name, prev_index, prev_line, prev_byte)) = current_header.take() {
+                let info = SectionInfo::new(
+                    prev_name,
+                    prev_index,
+                    prev_line,
+                    prev_byte,
+                    line_num.saturating_sub(1),
+                );
+                insert_index(&mut sections, info)?;
             }
-            current_header = Some((name, line_num, byte_offset));
+            current_header = Some((name, None, line_num, byte_offset));
         }
 
         // Check for literal "regedited open" trigger (can appear ANYWHERE in a line).
@@ -233,12 +280,17 @@ pub fn scan_content(content: &str) -> Result<DocumentHeader> {
                 byte_offset + raw_line.len(),
                 &mut trigger_counter,
             );
-            if let Some((prev_name, prev_line, prev_byte)) = current_header.take() {
-                let info =
-                    SectionInfo::new(prev_name, prev_line, prev_byte, line_num.saturating_sub(1));
-                sections.insert(info.name.clone(), info);
+            if let Some((prev_name, prev_index, prev_line, prev_byte)) = current_header.take() {
+                let info = SectionInfo::new(
+                    prev_name,
+                    prev_index,
+                    prev_line,
+                    prev_byte,
+                    line_num.saturating_sub(1),
+                );
+                insert_index(&mut sections, info)?;
             }
-            current_header = Some((section_name, line_num, byte_offset));
+            current_header = Some((section_name, None, line_num, byte_offset));
         }
 
         total_lines += 1;
@@ -250,9 +302,15 @@ pub fn scan_content(content: &str) -> Result<DocumentHeader> {
     }
 
     // Finalize the last section
-    if let Some((name, line, byte_offset)) = current_header {
-        let info = SectionInfo::new(name, line, byte_offset, total_lines.saturating_sub(1));
-        sections.insert(info.name.clone(), info);
+    if let Some((name, registry_index, line, byte_offset)) = current_header {
+        let info = SectionInfo::new(
+            name,
+            registry_index,
+            line,
+            byte_offset,
+            total_lines.saturating_sub(1),
+        );
+        insert_index(&mut sections, info)?;
     }
 
     Ok(DocumentHeader {
@@ -260,6 +318,28 @@ pub fn scan_content(content: &str) -> Result<DocumentHeader> {
         total_lines,
         total_bytes,
     })
+}
+
+fn insert_index(indexes: &mut BTreeMap<String, SectionInfo>, info: SectionInfo) -> Result<()> {
+    if let Some(index) = info.registry_index {
+        if indexes
+            .values()
+            .any(|existing| existing.registry_index == Some(index))
+        {
+            return Err(RegeditedError::Parse(format!(
+                "Duplicate registry index {}",
+                index
+            )));
+        }
+    }
+    if indexes.contains_key(&info.name) {
+        return Err(RegeditedError::Parse(format!(
+            "Duplicate index layout key '{}'",
+            info.name
+        )));
+    }
+    indexes.insert(info.name.clone(), info);
+    Ok(())
 }
 
 /// Quick scan that finds section names and their header line numbers
@@ -333,6 +413,31 @@ fn parse_registry_index_line(line: &str) -> Option<u64> {
         return rest.trim().parse::<u64>().ok();
     }
     trimmed.parse::<u64>().ok()
+}
+
+/// Parse `64`, `i64`, or `index:64` as the same canonical index reference.
+pub fn parse_index_reference(reference: &str) -> Option<u64> {
+    let value = reference.trim();
+    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return value.parse().ok();
+    }
+    if value.len() > 1
+        && matches!(value.as_bytes()[0], b'i' | b'I')
+        && value.as_bytes()[1..]
+            .iter()
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return value[1..].parse().ok();
+    }
+    let (prefix, index) = value.split_once(':')?;
+    if prefix.eq_ignore_ascii_case("index")
+        && !index.is_empty()
+        && index.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        index.parse().ok()
+    } else {
+        None
+    }
 }
 
 /// Parse a section header line
@@ -604,6 +709,48 @@ More data content.
         assert!(doc.get_section_case_insensitive("intro").is_some());
         assert!(doc.get_section_case_insensitive("CONFIG").is_some());
         assert!(doc.get_section_case_insensitive("data").is_some());
+    }
+
+    #[test]
+    fn numeric_index_references_are_canonical() {
+        let doc = scan_content(TEST_DOC).unwrap();
+        for reference in ["200", "i200", "I200", "index:200", "INDEX:200"] {
+            let section = doc.resolve_section(reference).unwrap();
+            assert_eq!(section.name, "Config");
+            assert_eq!(section.registry_index, Some(200));
+        }
+        assert_eq!(doc.resolve_section("config").unwrap().name, "Config");
+        assert!(doc.resolve_section("i999").is_err());
+
+        for reference in ["64", "i64", "I64", "index:64", "INDEX:64"] {
+            assert_eq!(parse_index_reference(reference), Some(64));
+        }
+        for reference in ["", "i", "index:", "i64s1", "Section64"] {
+            assert_eq!(parse_index_reference(reference), None);
+        }
+    }
+
+    #[test]
+    fn duplicate_numeric_indexes_are_rejected_even_with_different_legacy_names() {
+        let duplicate = r#"## SECTION: First
+index: 64
+0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0
+
+
+
+---
+## SECTION: Second
+index: 64
+0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0
+
+
+
+---
+"#;
+        let error = scan_content(duplicate).unwrap_err().to_string();
+        assert!(error.contains("Duplicate registry index 64"), "{error}");
     }
 
     #[test]

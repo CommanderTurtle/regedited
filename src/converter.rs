@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0
 
-use crate::zone_type::{encode_hex_word, ZoneType};
+use crate::zone_type::{decode_hex_word, encode_hex_word, ZoneType};
 
 const MAX_LINE: u32 = 0x0FFF_FFFF;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conversion {
     pub output: String,
+    pub clip: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZoneAssignment {
+    pub start: u32,
+    pub end: u32,
+    pub zone_type: ZoneType,
     pub clip: bool,
 }
 
@@ -55,6 +63,34 @@ pub fn parse_conversion(tokens: &[String], default_type: &str) -> Result<Convers
     Ok(Conversion {
         output: words.join(" : "),
         clip,
+    })
+}
+
+pub fn parse_zone_assignment(
+    tokens: &[String],
+    default_type: &str,
+) -> Result<ZoneAssignment, String> {
+    let conversion = parse_conversion(tokens, default_type)?;
+    let words: Vec<&str> = conversion.output.split(" : ").collect();
+    if words.len() != 2 {
+        return Err("zone assignment requires exactly two line numbers".to_string());
+    }
+    let (start, start_type) = decode_hex_word(words[0]).map_err(|error| error.to_string())?;
+    let (end, end_type) = decode_hex_word(words[1]).map_err(|error| error.to_string())?;
+    if start_type != end_type {
+        return Err("zone assignment start and end must use the same type".to_string());
+    }
+    if start > end {
+        return Err(format!(
+            "zone assignment start {} is greater than end {}",
+            start, end
+        ));
+    }
+    Ok(ZoneAssignment {
+        start,
+        end,
+        zone_type: start_type,
+        clip: conversion.clip,
     })
 }
 
@@ -156,5 +192,18 @@ mod tests {
         ] {
             assert!(parse_conversion(&tokens(&input), "markdown").is_err());
         }
+    }
+
+    #[test]
+    fn parses_typed_zone_assignment() {
+        let parsed = parse_zone_assignment(&tokens(&["b", "85", "95"]), "markdown").unwrap();
+        assert_eq!(parsed.start, 85);
+        assert_eq!(parsed.end, 95);
+        assert_eq!(parsed.zone_type, ZoneType::Code);
+        assert!(!parsed.clip);
+
+        assert!(parse_zone_assignment(&tokens(&["85"]), "markdown").is_err());
+        assert!(parse_zone_assignment(&tokens(&["b", "85", "p", "95"]), "markdown").is_err());
+        assert!(parse_zone_assignment(&tokens(&["95", "85"]), "markdown").is_err());
     }
 }
