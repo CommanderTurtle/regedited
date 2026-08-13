@@ -441,6 +441,7 @@ fn handle_grep(url: &str, state: &ServerState) -> Response<std::io::Cursor<Vec<u
 #[derive(Debug, Clone)]
 enum ServeRef {
     Literal(String),
+    IndexAll { registry_index: u64 },
     IndexString { registry_index: u64, slot: usize },
     IndexDb { registry_index: u64, slot: usize },
     IndexDbLine { registry_index: u64 },
@@ -512,6 +513,13 @@ fn parse_ref_spec(spec: &str) -> std::result::Result<ServeRef, String> {
     }
 
     let parts: Vec<&str> = trimmed.split(':').collect();
+    if parts.len() == 2 && parts[0].eq_ignore_ascii_case("index") {
+        return Ok(ServeRef::IndexAll {
+            registry_index: parts[1]
+                .parse::<u64>()
+                .map_err(|e| format!("Invalid registry index '{}': {}", parts[1], e))?,
+        });
+    }
     if parts.len() >= 3 && parts[0].eq_ignore_ascii_case("index") {
         let registry_index = parts[1]
             .parse::<u64>()
@@ -601,6 +609,11 @@ fn find_scanned_section(
 fn read_ref_value(content: &str, spec: &ServeRef) -> std::result::Result<String, String> {
     match spec {
         ServeRef::Literal(value) => Ok(value.clone()),
+        ServeRef::IndexAll { registry_index } => {
+            let section = find_scanned_section(content, *registry_index)?;
+            crate::fast_ops::aggregate_index_content(content, &section)
+                .map_err(|error| error.to_string())
+        }
         ServeRef::IndexString {
             registry_index,
             slot,
@@ -750,6 +763,21 @@ fn resolve_literal_or_ref(content: &str, value: &str) -> std::result::Result<Str
     } else {
         Ok(value.to_string())
     }
+}
+
+fn read_bool_scope(content: &str, scope: &str) -> std::result::Result<String, String> {
+    if scope == "__all__" {
+        return Ok(content.to_string());
+    }
+    let expanded = crate::qol::compact_ref(scope).unwrap_or_else(|| scope.to_string());
+    let parsed = parse_ref_spec(&expanded)?;
+    if matches!(parsed, ServeRef::Literal(_)) {
+        return Err(format!(
+            "Boolean scope '{}' is not a reference; use __all__, i<INDEX>, i<INDEX>s<SLOT>, i<INDEX>db<SLOT>, i<INDEX>dbl, i<INDEX>hl, or i<INDEX>z<ZONE>",
+            scope
+        ));
+    }
+    read_ref_value(content, &parsed)
 }
 
 fn compare_ref_values(
@@ -908,18 +936,17 @@ fn handle_query(mut request: Request, state: &ServerState) {
             parsed.get("operation").and_then(|v| v.as_str()),
             parsed.get("patterns").and_then(|v| v.as_array()),
         ) {
-            let header = state.header.lock().unwrap();
-            if header.resolve_section(section).is_err() {
-                let response = json_response(
-                    404,
-                    &format!(r#"{{"error":{}}}"#, json_escape(&format!("Index '{}' not found", section))),
-                );
-                if let Err(e) = request.respond(response) {
-                    eprintln!("Query response error: {}", e);
+            let section_text = match read_bool_scope(&content, section) {
+                Ok(value) => value,
+                Err(error) => {
+                    let response =
+                        json_response(400, &format!(r#"{{"error":{}}}"#, json_escape(&error)));
+                    if let Err(error) = request.respond(response) {
+                        eprintln!("Query response error: {}", error);
+                    }
+                    return;
                 }
-                return;
-            }
-            let section_text = content.as_str();
+            };
             let pats: Vec<String> = patterns
                 .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -1011,4 +1038,37 @@ fn percent_decode(s: &str) -> String {
         i += 1;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_bool_scope;
+
+    const SCOPED_DOCUMENT: &str = "zone alpha\nzone beta\nforeign payload\nprefix-regedited open-suffix\nindex: 8\n1x0000000 : 1x0000001 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000\n0.125 | -1.5 | 2 | 3 | 4 | 5 | 6 | 7 | 8\nfirst alpha string\nsecond audit string\nthird string\n";
+
+    #[test]
+    fn http_boolean_scope_uses_exact_refs_and_whole_index_aggregates() {
+        assert_eq!(
+            read_bool_scope(SCOPED_DOCUMENT, "i8s1").unwrap(),
+            "first alpha string"
+        );
+        assert_eq!(read_bool_scope(SCOPED_DOCUMENT, "i8db2").unwrap(), "-1.5");
+        assert_eq!(
+            read_bool_scope(SCOPED_DOCUMENT, "i8z1").unwrap(),
+            "zone alpha\nzone beta"
+        );
+
+        let aggregate = read_bool_scope(SCOPED_DOCUMENT, "i8").unwrap();
+        assert!(aggregate.contains("first alpha string"));
+        assert!(aggregate.contains("0.125 | -1.5"));
+        assert!(aggregate.contains("zone alpha\nzone beta"));
+        assert!(!read_bool_scope(SCOPED_DOCUMENT, "i8s1")
+            .unwrap()
+            .contains("foreign payload"));
+        assert_eq!(
+            read_bool_scope(SCOPED_DOCUMENT, "__all__").unwrap(),
+            SCOPED_DOCUMENT
+        );
+        assert!(read_bool_scope(SCOPED_DOCUMENT, "not-a-ref").is_err());
+    }
 }

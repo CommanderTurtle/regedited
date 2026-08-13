@@ -80,13 +80,40 @@ fn numeric_refs_help_and_line_assignment_work_end_to_end() {
     assert!(help.status.success());
     let help_text = text(&help.stdout);
     assert!(help_text.contains("[INDEXES & DOCUMENT]"));
-    assert!(help_text.contains("apply `--ex [1|2|3|4]` after `--help`"));
+    assert!(help_text.contains("apply `--ex [1|2|3|4|5|6|7|8]` after `--help`"));
 
     let examples = run(&rgd, &state, &["--help", "--ex", "1"]);
     assert!(examples.status.success());
     let examples_text = text(&examples.stdout);
     assert!(examples_text.contains("rgd cv b 85 95 to i64 1"));
     assert!(examples_text.contains("[ZONES & LINE RANGES]"));
+
+    for selector in 5..=8 {
+        let advanced = run(
+            &rgd,
+            &state,
+            &["ba", "--help", "--ex", &selector.to_string()],
+        );
+        assert!(advanced.status.success(), "{}", text(&advanced.stderr));
+        let advanced_text = text(&advanced.stdout);
+        assert!(advanced_text.contains("(advanced)"));
+        let shell = match selector {
+            5 => "PowerShell (pwsh)",
+            6 => "Bash",
+            7 => "Python",
+            8 => "Command Prompt (cmd)",
+            _ => unreachable!(),
+        };
+        assert!(advanced_text.contains(shell));
+        assert!(advanced_text.contains("i8z1"));
+        assert!(advanced_text.contains("i8db3"));
+        assert!(advanced_text.contains("i90db4"));
+    }
+
+    let invalid_selector = run(&rgd, &state, &["ba", "--help", "--ex", "9"]);
+    assert!(!invalid_selector.status.success());
+    assert!(text(&invalid_selector.stderr)
+        .contains("use 1-4 for standard PowerShell/Bash/Python/CMD or 5-8"));
 }
 
 #[test]

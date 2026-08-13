@@ -718,73 +718,81 @@ enum Commands {
     },
 
     // ==================== BOOLEAN OPERATIONS (if-then logic) ====================
-    /// Boolean AND: content must contain ALL patterns
+    /// Boolean AND: selected reference content must contain ALL patterns
     BoolAnd {
         /// Path to the markdown file
         file: PathBuf,
-        /// Index reference (or "__all__" for the entire file)
-        #[arg(value_name = "INDEX")]
+        /// Exact reference scope, whole index aggregate, or "__all__"
+        #[arg(value_name = "SCOPE")]
         section: String,
         /// Patterns to match (ALL must be found)
+        #[arg(allow_hyphen_values = true)]
         patterns: Vec<String>,
     },
 
-    /// Boolean NAND: contains first pattern but NOT second
+    /// Boolean NAND: selected reference contains first pattern but NOT second
     BoolNand {
         /// Path to the markdown file
         file: PathBuf,
-        /// Index reference (or "__all__" for the entire file)
-        #[arg(value_name = "INDEX")]
+        /// Exact reference scope, whole index aggregate, or "__all__"
+        #[arg(value_name = "SCOPE")]
         section: String,
         /// Pattern that must be found
+        #[arg(allow_hyphen_values = true)]
         must_contain: String,
         /// Pattern that must NOT be found
+        #[arg(allow_hyphen_values = true)]
         must_not: String,
     },
 
-    /// Boolean OR: content contains ANY of the patterns
+    /// Boolean OR: selected reference content contains ANY pattern
     BoolOr {
         /// Path to the markdown file
         file: PathBuf,
-        /// Index reference (or "__all__" for the entire file)
-        #[arg(value_name = "INDEX")]
+        /// Exact reference scope, whole index aggregate, or "__all__"
+        #[arg(value_name = "SCOPE")]
         section: String,
         /// Patterns to match (ANY must be found)
+        #[arg(allow_hyphen_values = true)]
         patterns: Vec<String>,
     },
 
-    /// Boolean XOR: contains EXACTLY ONE of two patterns
+    /// Boolean XOR: selected reference contains EXACTLY ONE pattern
     BoolXor {
         /// Path to the markdown file
         file: PathBuf,
-        /// Index reference (or "__all__" for the entire file)
-        #[arg(value_name = "INDEX")]
+        /// Exact reference scope, whole index aggregate, or "__all__"
+        #[arg(value_name = "SCOPE")]
         section: String,
         /// First pattern
+        #[arg(allow_hyphen_values = true)]
         pattern_a: String,
         /// Second pattern
+        #[arg(allow_hyphen_values = true)]
         pattern_b: String,
     },
 
-    /// Count occurrences of a pattern in content
+    /// Count occurrences of a pattern in an exact reference scope
     Count {
         /// Path to the markdown file
         file: PathBuf,
-        /// Index reference (or "__all__" for the entire file)
-        #[arg(value_name = "INDEX")]
+        /// Exact reference scope, whole index aggregate, or "__all__"
+        #[arg(value_name = "SCOPE")]
         section: String,
         /// Pattern to count
+        #[arg(allow_hyphen_values = true)]
         pattern: String,
     },
 
-    /// If-contains-then: return value based on pattern presence
+    /// If-contains-then: return a value from an exact reference check
     IfContains {
         /// Path to the markdown file
         file: PathBuf,
-        /// Index reference (or "__all__" for the entire file)
-        #[arg(value_name = "INDEX")]
+        /// Exact reference scope, whole index aggregate, or "__all__"
+        #[arg(value_name = "SCOPE")]
         section: String,
         /// Pattern to check for
+        #[arg(allow_hyphen_values = true)]
         pattern: String,
         /// Value to return if pattern is found
         #[arg(long, default_value = "TRUE")]
@@ -1107,28 +1115,91 @@ enum HelpShell {
     Cmd,
 }
 
-impl HelpShell {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExampleLevel {
+    Standard,
+    Advanced,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HelpSelection {
+    shell: HelpShell,
+    level: ExampleLevel,
+    selector: u8,
+}
+
+impl HelpSelection {
     fn from_selector(value: &str) -> Option<Self> {
         match value.to_ascii_lowercase().as_str() {
-            "1" | "pwsh" | "powershell" => Some(Self::PowerShell),
-            "2" | "bash" => Some(Self::Bash),
-            "3" | "python" | "py" => Some(Self::Python),
-            "4" | "cmd" | "bat" => Some(Self::Cmd),
+            "1" | "pwsh" | "powershell" => Some(Self {
+                shell: HelpShell::PowerShell,
+                level: ExampleLevel::Standard,
+                selector: 1,
+            }),
+            "2" | "bash" => Some(Self {
+                shell: HelpShell::Bash,
+                level: ExampleLevel::Standard,
+                selector: 2,
+            }),
+            "3" | "python" | "py" => Some(Self {
+                shell: HelpShell::Python,
+                level: ExampleLevel::Standard,
+                selector: 3,
+            }),
+            "4" | "cmd" | "bat" => Some(Self {
+                shell: HelpShell::Cmd,
+                level: ExampleLevel::Standard,
+                selector: 4,
+            }),
+            "5" | "pwsh-advanced" | "powershell-advanced" => Some(Self {
+                shell: HelpShell::PowerShell,
+                level: ExampleLevel::Advanced,
+                selector: 5,
+            }),
+            "6" | "bash-advanced" => Some(Self {
+                shell: HelpShell::Bash,
+                level: ExampleLevel::Advanced,
+                selector: 6,
+            }),
+            "7" | "python-advanced" | "py-advanced" => Some(Self {
+                shell: HelpShell::Python,
+                level: ExampleLevel::Advanced,
+                selector: 7,
+            }),
+            "8" | "cmd-advanced" | "bat-advanced" => Some(Self {
+                shell: HelpShell::Cmd,
+                level: ExampleLevel::Advanced,
+                selector: 8,
+            }),
             _ => None,
         }
     }
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
+        format!(
+            "{} — {} ({})",
+            self.selector,
+            self.shell.name(),
+            match self.level {
+                ExampleLevel::Standard => "standard",
+                ExampleLevel::Advanced => "advanced",
+            }
+        )
+    }
+}
+
+impl HelpShell {
+    fn name(self) -> &'static str {
         match self {
-            Self::PowerShell => "1 — PowerShell (pwsh)",
-            Self::Bash => "2 — Bash",
-            Self::Python => "3 — Python",
-            Self::Cmd => "4 — Command Prompt (cmd)",
+            Self::PowerShell => "PowerShell (pwsh)",
+            Self::Bash => "Bash",
+            Self::Python => "Python",
+            Self::Cmd => "Command Prompt (cmd)",
         }
     }
 }
 
-fn requested_help_shell(args: &[OsString]) -> Option<HelpShell> {
+fn requested_help_selection(args: &[OsString]) -> Option<HelpSelection> {
     let position = args
         .iter()
         .position(|value| matches!(value.to_str(), Some("--ex" | "-ex" | "--examples" | "-e")))?;
@@ -1137,11 +1208,11 @@ fn requested_help_shell(args: &[OsString]) -> Option<HelpShell> {
         .and_then(|value| value.to_str())
         .filter(|value| !value.starts_with('-'))
         .unwrap_or("1");
-    Some(HelpShell::from_selector(selector).unwrap_or_else(|| {
+    Some(HelpSelection::from_selector(selector).unwrap_or_else(|| {
         clap::Error::raw(
             ErrorKind::InvalidValue,
             format!(
-                "unknown example shell '{}'; use 1/pwsh, 2/bash, 3/python, or 4/cmd",
+                "unknown example selector '{}'; use 1-4 for standard PowerShell/Bash/Python/CMD or 5-8 for their advanced counterparts",
                 selector
             ),
         )
@@ -1150,8 +1221,8 @@ fn requested_help_shell(args: &[OsString]) -> Option<HelpShell> {
 }
 
 fn handle_help_request(args: &[OsString], short_mode: bool) -> bool {
-    let example_shell = requested_help_shell(args);
-    let example_mode = example_shell.is_some();
+    let example_selection = requested_help_selection(args);
+    let example_mode = example_selection.is_some();
     let top_level_help = args.len() == 1
         || args
             .get(1)
@@ -1168,7 +1239,7 @@ fn handle_help_request(args: &[OsString], short_mode: bool) -> bool {
             } else {
                 command
             };
-            print_command_help(canonical, short_mode, example_shell);
+            print_command_help(canonical, short_mode, example_selection);
         } else {
             print_top_level_help(short_mode, false);
         }
@@ -1181,7 +1252,7 @@ fn handle_help_request(args: &[OsString], short_mode: bool) -> bool {
         .any(|value| matches!(value.to_str(), Some("-h" | "--help" | "-help")));
     if requested {
         if let Some(command) = args.get(1).and_then(|value| value.to_str()) {
-            print_command_help(command, short_mode, example_shell);
+            print_command_help(command, short_mode, example_selection);
         } else {
             print_top_level_help(short_mode, false);
         }
@@ -1197,7 +1268,7 @@ fn print_top_level_help(short_mode: bool, example_mode: bool) {
     println!("{} - Fast indexed plaintext operations", program);
     println!("Usage: {} <COMMAND> [ARGS] [OPTIONS]", program);
     println!(
-        "View: {}  (apply `--ex [1|2|3|4]` after `--help` for shell examples)",
+        "View: {}  (apply `--ex [1|2|3|4|5|6|7|8]` after `--help`; 5-8 are advanced)",
         if example_mode {
             "advanced examples"
         } else {
@@ -1253,7 +1324,10 @@ fn print_top_level_help(short_mode: bool, example_mode: bool) {
         }
     }
 
-    println!("\nTop-level examples: `{} --help --ex [1|2|3|4]`", program);
+    println!(
+        "\nTop-level examples: `{} --help --ex [1|2|3|4|5|6|7|8]`",
+        program
+    );
     println!("Command detail: `<command> -help`");
     println!("Shell guides: `regedited -ex <powershell|repl|python|bash|bat>`");
     if short_mode {
@@ -2117,17 +2191,172 @@ fn render_command_example(raw: &str, shell: HelpShell) -> String {
     }
 }
 
-fn print_command_examples(command_name: &str, short: &str, shell: HelpShell) {
-    println!("Examples for rgd {}", short);
-    println!("Active interactive shell: {}", shell.label());
-    println!("The loaded document is used whenever FILE is omitted.\n");
-    for (index, example) in command_examples(command_name).iter().enumerate() {
-        println!("{}. {}", index + 1, example.purpose);
-        println!("   {}", render_command_example(example.command, shell));
+fn advanced_example_purpose(ordinal: usize, base: &str) -> String {
+    let gate = match ordinal {
+        0 => "After exact zone AND and string XOR gates",
+        1 => "After exact DB-line AND and isolated-string NAND gates",
+        2 => "After exact DB-value and zone phrase gates",
+        3 => "After an exact cross-index decimal decision and zone diff",
+        _ => "After checkpoint, pull, XOR, diff, and conversion preflight",
+    };
+    format!("{}, {}", gate, base.to_ascii_lowercase())
+}
+
+fn advanced_base_command(command_name: &str, raw: &str) -> String {
+    match (command_name, raw) {
+        // The advanced gates require the loaded registry to exist, so this example must
+        // create a second document rather than trying to recreate the active one.
+        ("new", "rgd n registry.txt \"Registry\"") => {
+            "rgd n advanced-registry.txt \"Registry\"".to_string()
+        }
+        // Index 8 is deliberately part of the advanced reference fixture. Use another
+        // low-numbered identity so the add operation remains independently executable.
+        ("add", "rgd a 8") => "rgd a 908".to_string(),
+        // Advanced checkpoint examples establish the state they inspect. This makes
+        // every displayed line directly runnable instead of relying on an invisible
+        // earlier `commit` from a tutorial fixture.
+        ("check", "rgd ck") => "rgd cm && rgd ck".to_string(),
+        ("check", "rgd ck registry.txt") => {
+            "rgd cm registry.txt && rgd ck registry.txt".to_string()
+        }
+        ("check", "rgd ck --no-save") => "rgd cm && rgd ck --no-save".to_string(),
+        ("check", "rgd ck moved.txt") => "rgd cm moved.txt && rgd ck moved.txt".to_string(),
+        ("check", "CHECKPOINT") => "rgd cm && rgd ck && rgd pl && rgd cm".to_string(),
+        // Pull necessarily consumes a check result, so advanced pull lines show the
+        // complete commit/check/pull lifecycle rather than assuming hidden state.
+        ("pull", "rgd pl") | ("pull", "rgd ck && rgd pl") => {
+            "rgd cm && rgd ck && rgd pl".to_string()
+        }
+        ("pull", "rgd pl registry.txt") => {
+            "rgd cm registry.txt && rgd ck registry.txt && rgd pl registry.txt".to_string()
+        }
+        ("pull", "rgd ck moved.txt && rgd pl moved.txt") => {
+            "rgd cm moved.txt && rgd ck moved.txt && rgd pl moved.txt".to_string()
+        }
+        ("pull", "CHECKPOINT") => "rgd cm && rgd ck && rgd pl && rgd cm".to_string(),
+        ("summary", "rgd ck && rgd sm") => "rgd cm && rgd ck && rgd sm".to_string(),
+        _ => raw.to_string(),
     }
 }
 
-fn print_command_help(command_name: &str, short_mode: bool, example_shell: Option<HelpShell>) {
+fn render_advanced_command(
+    command_name: &str,
+    raw: &str,
+    shell: HelpShell,
+    ordinal: usize,
+) -> String {
+    let raw = advanced_base_command(command_name, raw);
+    let mut base = render_command_example(&raw, shell);
+    // PowerShell accepts `if` as a statement, but not as the command immediately
+    // following `&&`. A script block preserves the gate's exit semantics in a chain.
+    if matches!(shell, HelpShell::PowerShell) && base.starts_with("if (") {
+        base = format!("& {{ {} }}", base);
+    }
+    match shell {
+        HelpShell::PowerShell => match ordinal {
+            0 => format!(
+                "rgd ba i8z1 \"code payload\" \"manual review\" && rgd bx i8s2 audit missing && {}",
+                base
+            ),
+            1 => format!(
+                "rgd ba i8dbl 0.125 -1.5 && rgd bn i90s1 waterfront archived && {}",
+                base
+            ),
+            2 => format!(
+                "rgd ba i8db3 1.25 && rgd ba i90z1 \"closing date\" \"follow up\" && {}",
+                base
+            ),
+            3 => format!(
+                "$decision = rgd rb i8db3 lte i90db4 --then-val 1 --else-val 0; if ($decision -eq '1') {{ rgd rd i8z1 i90z1 && {} }}",
+                base
+            ),
+            _ => format!(
+                "rgd cm && rgd ck && rgd pl && rgd cm && rgd bx i8s2 audit missing && rgd rd i8z1 i90z1 && rgd cv b 14 15 && {}",
+                base
+            ),
+        },
+        HelpShell::Bash => match ordinal {
+            0 => format!(
+                "rgd ba i8z1 \"code payload\" \"manual review\" && rgd bx i8s2 audit missing && {}",
+                base
+            ),
+            1 => format!(
+                "rgd ba i8dbl 0.125 -1.5 && rgd bn i90s1 waterfront archived && {}",
+                base
+            ),
+            2 => format!(
+                "rgd ba i8db3 1.25 && rgd ba i90z1 \"closing date\" \"follow up\" && {}",
+                base
+            ),
+            3 => format!(
+                "[ \"$(rgd rb i8db3 lte i90db4 --then-val 1 --else-val 0)\" = 1 ] && rgd rd i8z1 i90z1 && {}",
+                base
+            ),
+            _ => format!(
+                "rgd cm && rgd ck && rgd pl && rgd cm && rgd bx i8s2 audit missing && rgd rd i8z1 i90z1 && rgd cv b 14 15 && {}",
+                base
+            ),
+        },
+        HelpShell::Python => {
+            let prefix = match ordinal {
+                0 => "subprocess.run(['rgd','ba','i8z1','code payload','manual review'], check=True); subprocess.run(['rgd','bx','i8s2','audit','missing'], check=True); ".to_string(),
+                1 => "subprocess.run(['rgd','ba','i8dbl','0.125','-1.5'], check=True); subprocess.run(['rgd','bn','i90s1','waterfront','archived'], check=True); ".to_string(),
+                2 => "subprocess.run(['rgd','ba','i8db3','1.25'], check=True); subprocess.run(['rgd','ba','i90z1','closing date','follow up'], check=True); ".to_string(),
+                3 => "decision=subprocess.check_output(['rgd','rb','i8db3','lte','i90db4','--then-val','1','--else-val','0'], text=True).strip(); assert decision == '1'; subprocess.run(['rgd','rd','i8z1','i90z1'], check=True); ".to_string(),
+                _ => "subprocess.run(['rgd','cm'], check=True); subprocess.run(['rgd','ck'], check=True); subprocess.run(['rgd','pl'], check=True); subprocess.run(['rgd','cm'], check=True); subprocess.run(['rgd','bx','i8s2','audit','missing'], check=True); subprocess.run(['rgd','rd','i8z1','i90z1'], check=True); subprocess.run(['rgd','cv','b','14','15'], check=True); ".to_string(),
+            };
+            format!("import subprocess; {}{}", prefix, base)
+        }
+        HelpShell::Cmd => match ordinal {
+            0 => format!(
+                "rgd ba i8z1 \"code payload\" \"manual review\" && rgd bx i8s2 audit missing && {}",
+                base
+            ),
+            1 => format!(
+                "rgd ba i8dbl 0.125 -1.5 && rgd bn i90s1 waterfront archived && {}",
+                base
+            ),
+            2 => format!(
+                "rgd ba i8db3 1.25 && rgd ba i90z1 \"closing date\" \"follow up\" && {}",
+                base
+            ),
+            3 => format!(
+                "rgd rb i8db3 lte i90db4 --then-val 1 --else-val 0 | findstr /b 1 >nul && rgd rd i8z1 i90z1 && {}",
+                base
+            ),
+            _ => format!(
+                "rgd cm && rgd ck && rgd pl && rgd cm && rgd bx i8s2 audit missing && rgd rd i8z1 i90z1 && rgd cv b 14 15 && {}",
+                base
+            ),
+        },
+    }
+}
+
+fn print_command_examples(command_name: &str, short: &str, selection: HelpSelection) {
+    println!("Examples for rgd {}", short);
+    println!("Active interactive shell: {}", selection.label());
+    println!("The loaded document is used whenever FILE is omitted.\n");
+    for (index, example) in command_examples(command_name).iter().enumerate() {
+        let (purpose, command) = match selection.level {
+            ExampleLevel::Standard => (
+                example.purpose.to_string(),
+                render_command_example(example.command, selection.shell),
+            ),
+            ExampleLevel::Advanced => (
+                advanced_example_purpose(index, example.purpose),
+                render_advanced_command(command_name, example.command, selection.shell, index),
+            ),
+        };
+        println!("{}. {}", index + 1, purpose);
+        println!("   {}", command);
+    }
+}
+
+fn print_command_help(
+    command_name: &str,
+    short_mode: bool,
+    example_selection: Option<HelpSelection>,
+) {
     let root = Cli::command();
     let Some(subcommand) = root.find_subcommand(command_name) else {
         clap::Error::raw(
@@ -2157,10 +2386,13 @@ fn print_command_help(command_name: &str, short_mode: bool, example_shell: Optio
         .print_long_help()
         .unwrap_or_else(|error| clap::Error::raw(ErrorKind::Io, error.to_string()).exit());
     println!();
-    if let Some(shell) = example_shell {
-        print_command_examples(command_name, short, shell);
+    if let Some(selection) = example_selection {
+        print_command_examples(command_name, short, selection);
     } else {
-        println!("Examples: rgd {} --help --ex [1|2|3|4]", short);
+        println!(
+            "Examples: rgd {} --help --ex [1|2|3|4|5|6|7|8] (5-8 advanced)",
+            short
+        );
     }
 }
 
@@ -3545,6 +3777,7 @@ fn cmd_hex_replace(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RefSpec {
     Literal(String),
+    IndexAll { registry_index: u64 },
     IndexString { registry_index: u64, slot: usize },
     IndexDb { registry_index: u64, slot: usize },
     IndexDbLine { registry_index: u64 },
@@ -3659,6 +3892,11 @@ fn parse_ref_spec(spec: &str) -> Result<RefSpec, Box<dyn std::error::Error>> {
     }
 
     let parts: Vec<&str> = trimmed.split(':').collect();
+    if parts.len() == 2 && parts[0].eq_ignore_ascii_case("index") {
+        return Ok(RefSpec::IndexAll {
+            registry_index: parts[1].parse::<u64>()?,
+        });
+    }
     if parts.len() >= 3 && parts[0].eq_ignore_ascii_case("index") {
         let registry_index = parts[1].parse::<u64>()?;
         let kind = parts[2].to_ascii_lowercase();
@@ -3713,6 +3951,13 @@ fn parse_ref_spec(spec: &str) -> Result<RefSpec, Box<dyn std::error::Error>> {
 fn read_ref_value(file: &PathBuf, spec: &RefSpec) -> Result<String, Box<dyn std::error::Error>> {
     match spec {
         RefSpec::Literal(value) => Ok(value.clone()),
+        RefSpec::IndexAll { registry_index } => {
+            let section = find_scanned_section(file, *registry_index)?;
+            let content = std::fs::read_to_string(file)?;
+            Ok(regedited::fast_ops::aggregate_index_content(
+                &content, &section,
+            )?)
+        }
         RefSpec::IndexString {
             registry_index,
             slot,
@@ -3872,6 +4117,9 @@ fn set_ref_value(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match spec {
         RefSpec::Literal(_) => Err("Cannot write to a literal ref".into()),
+        RefSpec::IndexAll { .. } => {
+            Err("Cannot write to a whole-index aggregate; select a string, DB value, DB line, hex line, or zone".into())
+        }
         RefSpec::IndexString {
             registry_index,
             slot,
@@ -3984,6 +4232,9 @@ fn clear_ref_value(file: &PathBuf, spec: &RefSpec) -> Result<(), Box<dyn std::er
             regedited::zone_type::ZoneType::Markdown,
         ),
         RefSpec::Literal(_) => Err("Cannot clear a literal ref".into()),
+        RefSpec::IndexAll { .. } => {
+            Err("Cannot clear a whole-index aggregate; select a writable child reference".into())
+        }
         _ => set_ref_value(file, spec, "", false),
     }
 }
@@ -4703,19 +4954,30 @@ fn cmd_grab_html(
 
 // ==================== BOOLEAN OPERATION COMMANDS ====================
 
-/// Get document content for boolean operations.
+/// Resolve the exact content selected for a boolean operation.
 ///
-/// An index argument validates context but does not create a content boundary.
-fn get_bool_content(file: &PathBuf, section: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let content = std::fs::read_to_string(file)?;
-
-    if section == "__all__" {
-        Ok(content)
-    } else {
-        let header = scan_content(&content)?;
-        header.resolve_section(section)?;
-        Ok(content)
+/// `__all__` selects the complete file. A whole index selects its fixed
+/// metadata plus all three strings and all defined zones. Child refs select
+/// only that string, DB value, DB line, hex line, zone, or zone-hex pair.
+fn get_bool_content(file: &PathBuf, scope: &str) -> Result<String, Box<dyn std::error::Error>> {
+    if scope == "__all__" {
+        return Ok(std::fs::read_to_string(file)?);
     }
+
+    let expanded = regedited::qol::compact_ref(scope).unwrap_or_else(|| scope.to_string());
+    let spec = if let Some(registry_index) = regedited::header::parse_index_reference(&expanded) {
+        RefSpec::IndexAll { registry_index }
+    } else {
+        parse_ref_spec(&expanded)?
+    };
+    if matches!(spec, RefSpec::Literal(_)) {
+        return Err(format!(
+            "Boolean scope '{}' is not a reference; use __all__, i<INDEX>, i<INDEX>s<SLOT>, i<INDEX>db<SLOT>, i<INDEX>dbl, i<INDEX>hl, or i<INDEX>z<ZONE>",
+            scope
+        )
+        .into());
+    }
+    read_ref_value(file, &spec)
 }
 
 fn cmd_bool_and(

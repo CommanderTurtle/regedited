@@ -14,16 +14,17 @@
 //! find /I "contains" file >nul || find /I "must" file >nul && echo TRUE || echo FALSE
 //! ```
 //!
-//! Regedited provides the same boolean logic on the shared file after optional
-//! numeric-index validation.
+//! Regedited provides the same boolean logic on an exact reference scope. A
+//! whole index aggregates its metadata, DB values, strings, and defined zones;
+//! child refs restrict matching to one string, DB value, DB line, or zone.
 //!
 //! ## Usage
 //!
 //! ```bash
-//! # Validate index 64, then test the shared document
-//! regedited if-contains doc.md i64 "pattern" --then-val FOUND --else-val MISSING
+//! # Search only string 2 on index 64
+//! regedited if-contains doc.md i64s2 "pattern" --then-val FOUND --else-val MISSING
 //!
-//! # Boolean AND: the shared document must contain BOTH patterns
+//! # Boolean AND: the whole-index aggregate must contain BOTH patterns
 //! regedited bool-and doc.md i64 "rust" "fn"
 //!
 //! # Boolean NAND: contains first but NOT second
@@ -75,7 +76,7 @@ impl BoolResult {
 ///
 /// ```bash
 /// regedited bool-and doc.md i64 "rust" "fn" "main"
-/// # TRUE | Shared document contains ALL 3 patterns | matches=5
+/// # TRUE | Selected scope contains ALL 3 patterns | matches=5
 /// ```
 pub fn bool_and(content: &str, patterns: &[String]) -> BoolResult {
     let lines: Vec<&str> = content.lines().collect();
@@ -103,7 +104,7 @@ pub fn bool_and(content: &str, patterns: &[String]) -> BoolResult {
     all_matches.dedup_by(|a, b| a.0 == b.0);
 
     let desc = format!(
-        "Shared document contains ALL {} pattern(s): {}",
+        "Selected scope contains ALL {} pattern(s): {}",
         patterns.len(),
         patterns.join(", ")
     );
@@ -120,7 +121,7 @@ pub fn bool_and(content: &str, patterns: &[String]) -> BoolResult {
 ///
 /// ```bash
 /// regedited bool-nand doc.md i64 "fn" "python"
-/// # TRUE | Shared document contains 'fn' but NOT 'python' | matches=3
+/// # TRUE | Selected scope contains 'fn' but NOT 'python' | matches=3
 /// ```
 pub fn bool_nand(content: &str, must_contain: &str, must_not: &str) -> BoolResult {
     let lines: Vec<&str> = content.lines().collect();
@@ -143,7 +144,7 @@ pub fn bool_nand(content: &str, must_contain: &str, must_not: &str) -> BoolResul
     BoolResult {
         value: result,
         description: format!(
-            "Shared document contains '{}' but NOT '{}'",
+            "Selected scope contains '{}' but NOT '{}'",
             must_contain, must_not
         ),
         matches,
@@ -155,7 +156,7 @@ pub fn bool_nand(content: &str, must_contain: &str, must_not: &str) -> BoolResul
 ///
 /// ```bash
 /// regedited bool-or doc.md i64 "rust" "python" "go"
-/// # TRUE | Shared document contains ANY of 3 patterns | matches=5
+/// # TRUE | Selected scope contains ANY of 3 patterns | matches=5
 /// ```
 pub fn bool_or(content: &str, patterns: &[String]) -> BoolResult {
     let lines: Vec<&str> = content.lines().collect();
@@ -179,7 +180,7 @@ pub fn bool_or(content: &str, patterns: &[String]) -> BoolResult {
     BoolResult {
         value: !all_matches.is_empty(),
         description: format!(
-            "Shared document contains ANY of {} pattern(s): {}",
+            "Selected scope contains ANY of {} pattern(s): {}",
             patterns.len(),
             patterns.join(", ")
         ),
@@ -214,7 +215,7 @@ pub fn bool_xor(content: &str, pattern_a: &str, pattern_b: &str) -> BoolResult {
     BoolResult {
         value: result,
         description: format!(
-            "Shared document contains EXACTLY ONE of '{}' or '{}'",
+            "Selected scope contains EXACTLY ONE of '{}' or '{}'",
             pattern_a, pattern_b
         ),
         matches,

@@ -187,6 +187,46 @@ pub fn filter_by_value<'a>(
         .collect()
 }
 
+/// Build the deterministic read-only aggregate represented by a whole-index
+/// reference. The aggregate contains the index identity, hex-word line, all
+/// nine exact DB values, all three strings, and every non-empty defined zone.
+pub fn aggregate_index_content(content: &str, section: &ScannedSection) -> Result<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut values = vec![
+        format!("index: {}", section.index),
+        lines
+            .get(section.ascii_line)
+            .copied()
+            .unwrap_or_default()
+            .to_string(),
+        section
+            .db_values
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" | "),
+    ];
+    values.extend(section.strings.iter().cloned());
+    for (start, end) in section.zone_pairs {
+        if start == 0 && end == 0 {
+            continue;
+        }
+        let start = start as usize;
+        let end = end as usize;
+        if start > end || end >= lines.len() {
+            return Err(crate::RegeditedError::Parse(format!(
+                "Index {} zone range {}-{} is outside {} lines",
+                section.index,
+                start,
+                end,
+                lines.len()
+            )));
+        }
+        values.push(lines[start..=end].join("\n"));
+    }
+    Ok(values.join("\n"))
+}
+
 /// Filter scanned indexes by zone type.
 pub fn filter_by_type(sections: &[ScannedSection], zt: ZoneType) -> Vec<&ScannedSection> {
     sections
@@ -467,58 +507,6 @@ pub fn fast_replace_content(
     fast_replace(target_path, source_path, index_refs)
 }
 
-/// Helper: metadata-only replace for a single numeric index (string version)
-fn fast_replace_str(
-    target_content: &str,
-    source_content: &str,
-    registry_index: u64,
-) -> Result<String> {
-    let target_scan = fast_scan_content(target_content)?;
-    let source_scan = fast_scan_content(source_content)?;
-
-    let source_map: BTreeMap<u64, &ScannedSection> = source_scan
-        .iter()
-        .map(|section| (section.index, section))
-        .collect();
-
-    let mut result = target_content.to_string();
-
-    for sec_target in &target_scan {
-        if sec_target.index != registry_index {
-            continue;
-        }
-
-        if let Some(sec_source) = source_map.get(&sec_target.index) {
-            // Replace index line
-            let idx_line = sec_target.header_line + 1;
-            let new_index = format!("index: {}", sec_source.index);
-            result = crate::header::update_line(&result, idx_line, &new_index)?;
-
-            // Replace hex-word line
-            let ascii_line = sec_target.header_line + 2;
-            let new_ascii = format_ascii_diff(&sec_source.zone_pairs, &sec_source.zone_types);
-            result = crate::header::update_line(&result, ascii_line, &new_ascii)?;
-
-            // Replace numeric line
-            let new_numeric: Vec<String> =
-                sec_source.db_values.iter().map(|v| v.to_string()).collect();
-            result = crate::header::update_line(
-                &result,
-                sec_target.numeric_line,
-                &new_numeric.join(" | "),
-            )?;
-
-            // Replace 3 string lines
-            for i in 0..3 {
-                let line_idx = sec_target.numeric_line + 1 + i;
-                result = crate::header::update_line(&result, line_idx, &sec_source.strings[i])?;
-            }
-        }
-    }
-
-    Ok(result)
-}
-
 // ==================== FAST GREP (RIPGREP-STYLE) ====================
 
 /// Memory-mapped line grep — ripgrep-style fast search
@@ -729,6 +717,19 @@ More beta.
         let max = DecimalValue::from(50);
         let filtered = filter_by_value(&scanned, 0, &min, &max);
         assert_eq!(filtered.len(), 1); // Only Beta(10) in range [5,50]; Alpha(1) is below
+    }
+
+    #[test]
+    fn whole_index_aggregate_contains_only_its_metadata_strings_and_zones() {
+        let doc = "zone alpha\nzone beta\nother index zone\nanything regedited open anywhere\nindex: 8\n1x0000000 : 1x0000001 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000\n0.125 | -1.5 | 2 | 3 | 4 | 5 | 6 | 7 | 9007199254740993\nfirst string\nsecond string\nthird string\n";
+        let scanned = fast_scan_content(doc).unwrap();
+        let aggregate = aggregate_index_content(doc, &scanned[0]).unwrap();
+        assert!(aggregate.contains("index: 8"));
+        assert!(aggregate.contains("0.125 | -1.5"));
+        assert!(aggregate.contains("first string"));
+        assert!(aggregate.contains("zone alpha\nzone beta"));
+        assert!(!aggregate.contains("other index zone"));
+        assert!(!aggregate.contains("regedited open"));
     }
 
     #[test]
