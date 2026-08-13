@@ -23,14 +23,14 @@ flowchart TB
     end
 
     subgraph INDEX["Document Index"]
-        HDR["header.rs<br/>scan_content()<br/>DocumentHeader<br/>SectionInfo"]
+        HDR["header.rs<br/>scan_content()<br/>DocumentHeader<br/>SectionInfo compatibility type"]
         HSC["hex-word codec"]
     end
 
     subgraph DATA["Data Parsers"]
         AS["ascii_store.rs<br/>AsciiStore legacy type<br/>hex-word line + ZonePair"]
         ZT["zone_type.rs<br/>ZoneType enum<br/>encode/decode_hex_word"]
-        DL["db_line.rs<br/>DbLine<br/>SectionData<br/>9 values + 3 strings"]
+        DL["db_line.rs<br/>DbLine<br/>SectionData compatibility type<br/>9 exact decimals + 3 strings"]
     end
 
     subgraph OPS["Operations"]
@@ -117,17 +117,17 @@ flowchart LR
     subgraph SCAN["Scan Commands"]
         c_list["list &lt;file&gt;"]
         c_scan["scan [--filter] [--value]"]
-        c_db["db &lt;file&gt; &lt;section&gt;"]
-        c_ascii["hexline &lt;file&gt; &lt;section&gt;<br/>ascii legacy alias"]
+        c_db["db &lt;file&gt; &lt;index&gt;"]
+        c_ascii["hexline &lt;file&gt; &lt;index&gt;<br/>ascii legacy alias"]
         c_info["info &lt;file&gt;"]
-        c_content["content &lt;file&gt; &lt;section&gt;"]
+        c_content["content &lt;file&gt; &lt;index&gt;<br/>prints shared document"]
         c_summary["summary &lt;file&gt;"]
     end
 
     subgraph GREP["Grep Commands"]
         c_fgrep["fgrep &lt;file&gt; &lt;pattern&gt; [-s]"]
         c_fgm["fgrep-multi &lt;file&gt; &lt;p1&gt; &lt;p2&gt;..."]
-        c_grep["grep &lt;file&gt; &lt;section&gt; &lt;zone&gt;"]
+        c_grep["grep &lt;file&gt; &lt;index&gt; &lt;zone&gt;"]
         c_lines["lines &lt;file&gt; &lt;start&gt; &lt;end&gt;"]
     end
 
@@ -143,8 +143,8 @@ flowchart LR
         c_sn["set-num &lt;file&gt; S i v"]
         c_ss["set-str &lt;file&gt; S i v"]
         c_sz["set-zone &lt;file&gt; S z s e [-t type]"]
-        c_add["add &lt;file&gt; &lt;section&gt;"]
-        c_rm["rm &lt;file&gt; &lt;section&gt;"]
+        c_add["add &lt;file&gt; &lt;numeric index&gt;"]
+        c_rm["rm &lt;file&gt; &lt;index&gt;"]
         c_new["new &lt;file&gt; &lt;title&gt;"]
     end
 
@@ -211,7 +211,7 @@ flowchart TD
     end
 
     subgraph PY_ZONE["Zone Operations"]
-        pz1["re('zone-extract', file, section, zone)"]
+        pz1["re('zone-extract', file, index, zone)"]
         pz2["re('zone-copy', file, '--from', A, '-m', 0, '--to', B, '-n', 1)"]
         pz3["re('zone-append', file, S, z, '--text', 'new')"]
         pz4["re('zone-replace', file, S, z, '--text', content)"]
@@ -258,8 +258,8 @@ flowchart TD
 
     subgraph EVR_CORE["Core Operations"]
         e1["scan_content(&content) -> DocumentHeader"]
-        e2["header.get_section('Name') -> &SectionInfo"]
-        e3["header.section_names() -> Vec<&str>"]
+        e2["header.resolve_section('i64') -> &SectionInfo"]
+        e3["header.section_names() -> canonical internal index keys"]
     end
 
     subgraph EVR_HEX["Hex-Word Operations"]
@@ -269,9 +269,9 @@ flowchart TD
     end
 
     subgraph EVR_ZONE["Zone Manipulation"]
-        e7["extract_zone_content(content, section, zone) -> String"]
-        e8["replace_zone_content(content, section, zone, new) -> String"]
-        e9["append_zone_content(content, section, zone, append) -> String"]
+        e7["extract_zone_content(content, index_info, zone) -> String"]
+        e8["replace_zone_content(content, index_info, zone, new) -> String"]
+        e9["append_zone_content(content, index_info, zone, append) -> String"]
     end
 
     subgraph EVR_ENCAP["Encapsulation"]
@@ -305,7 +305,7 @@ flowchart TD
 mindmap
   root((Regedited<br/>Abilities))
     Scan
-      list :: list all sections
+      list :: list all indexes
       scan :: header-only metadata scan
       db :: show database table
       hexline :: show hex-word line
@@ -326,12 +326,12 @@ mindmap
       set_num :: update numeric value 0-8
       set_str :: update string 0-2
       set_zone :: update zone range + type
-      add :: add new section
-      rm :: remove section
+      add :: add fixed index record
+      rm :: remove fixed index record
       new :: create new document
     Diff
       diff :: metadata-only comparison
-      replace :: patch sections from source
+      replace :: patch fixed index records from source
     Boolean
       bool_and :: ALL patterns must match
       bool_nand :: contains A NOT B
@@ -388,19 +388,19 @@ sequenceDiagram
     participant Zone as zone.rs
     participant Ascii as ascii_store.rs
 
-    User->>CLI: regedited grep doc.md Section 1
+    User->>CLI: regedited grep doc.md i64 1
     CLI->>Store: Store::open()
     Store->>Mmap: MmapFile::open()
     Mmap-->>Store: &str (zero-copy mmap)
     Store->>Header: scan_content()
-    Header->>Header: find_line_offsets()
-    Header->>Header: parse_section_header() x N
+    Header->>Header: single line scan over mapped text
+    Header->>Header: find exact lowercase trigger substring x N
     Header-->>Store: DocumentHeader (BTreeMap)
     Store->>Ascii: AsciiStore::from_line()
     Ascii-->>Store: ZonePair {start: 60, end: 66}
     Store->>Zone: extract_zone()
-    Zone->>Mmap: byte offset jump
-    Mmap-->>Zone: lines 60-66
+    Zone->>Mmap: resolve absolute line range
+    Mmap-->>Zone: exact lines 60-66
     Zone-->>CLI: Zone content
     CLI-->>User: Display content
 ```
@@ -418,7 +418,7 @@ sequenceDiagram
     participant HDR as header.rs
     participant ZT as zone_type.rs
 
-    User->>CLI: regedited zone-replace doc.md Section 1 --text "new"
+    User->>CLI: regedited zone-replace doc.md i64 1 --text "new"
     CLI->>ZE: replace_zone_content()
     ZE->>AS: AsciiStore::from_line()
     AS-->>ZE: ZonePair {start: 60, end: 66}
@@ -444,12 +444,12 @@ sequenceDiagram
 flowchart TB
     subgraph SOURCE["Single Source File"]
         FILE["Markdown / HTML / JS / misc text file"]
-        HDRS["regedited open triggers<br/>or ## SECTION compatibility"]
+        HDRS["exact lowercase trigger substring"]
         IDX["index: N"]
         ASCII["hex-word line<br/>3 typed zone pairs"]
         DB["9 numeric DB values"]
         STR["3 string slots"]
-        BODY["opaque content lines"]
+        BODY["shared opaque document lines"]
     end
 
     subgraph REFS["Native Ref Specs"]
@@ -484,13 +484,14 @@ flowchart TB
     IDX --> ASCII
     IDX --> DB
     IDX --> STR
-    IDX --> BODY
+    FILE --> BODY
 
     STR --> R1
     DB --> R2
     DB --> R3
     ASCII --> R4
     ASCII --> R6
+    ASCII --> R5
     BODY --> R5
     BODY --> R7
 

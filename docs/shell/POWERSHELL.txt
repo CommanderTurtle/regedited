@@ -17,13 +17,13 @@ ref-* commands use 1-based slots:
   index:5:zone:1 through index:5:zone:3
   index:5:zonehex:1 through index:5:zonehex:3
 
-Older section commands use 0-based slots:
-  set-str FILE SECTION 0 through 2
-  set-num FILE SECTION 0 through 8
-  clip FILE SECTION 0 through 2
-  clip-db FILE SECTION 0 through 8
-  grep FILE SECTION 0 through 2
-  zone-extract FILE SECTION 0 through 2
+The original positional commands use 0-based slots:
+  set-str FILE INDEX 0 through 2
+  set-num FILE INDEX 0 through 8
+  clip FILE INDEX 0 through 2
+  clip-db FILE INDEX 0 through 8
+  grep FILE INDEX 0 through 2
+  zone-extract FILE INDEX 0 through 2
 
 Recommended executable setup:
 
@@ -153,7 +153,7 @@ Clipboard routes:
 & $REG ref-get $DOC 'hex:0x000001D..0x000001E' | Set-Clipboard
 & $REG hex-extract $DOC 0x000001D 0x000001E | Set-Clipboard
 
-# Legacy clipboard commands. These use section keys and zero-based slots.
+# Direct clipboard commands. These retain zero-based slots.
 & $REG clip $DOC 'index:38' 0
 & $REG clip-zone $DOC 'index:38' 0
 & $REG clip-db $DOC 'index:38' 6
@@ -255,7 +255,7 @@ Index-zone helper commands:
 & $REG index-zone-transfer --from-file $DOC --from-index 869 --from-zone 0 --to-file $DOC --to-index 38 --to-zone 0
 & $REG undo $DOC
 
-Legacy section helper commands:
+Direct zero-based index helper commands:
 
 & $REG set-str $DOC 'index:38' 0 'legacy string zero'
 & $REG set-num $DOC 'index:38' 6 777
@@ -266,13 +266,13 @@ Legacy section helper commands:
 & $REG undo $DOC
 & $REG zone-append $DOC 'index:38' 0 --text 'legacy append'
 & $REG undo $DOC
-& $REG zone-copy $DOC 'index:869' 0 'index:38' 0
+& $REG zone-copy $DOC --from 'index:869' --from-zone 0 --to 'index:38' --to-zone 0
 & $REG undo $DOC
 
 Search and old boolean helpers:
 
 & $REG fgrep $DOC 'thirty-eight'
-& $REG fgrep $DOC 'zone' --section 'index:38'
+& $REG fgrep $DOC 'zone' --index 'index:38'
 & $REG fgrep-multi $DOC 'thirty-eight' 'eight-six-nine'
 & $REG lines $DOC 29 30
 & $REG bool-and $DOC 'index:38' 'multiline' 'value'
@@ -285,12 +285,12 @@ Search and old boolean helpers:
 Create/copy/replace documents:
 
 & $REG new .\new-doc.md 'New Regedited Document'
-& $REG add .\new-doc.md 'LegacyNamedSection'
-& $REG rm .\new-doc.md 'LegacyNamedSection'
+& $REG add .\new-doc.md 900
+& $REG rm .\new-doc.md 900
 Copy-Item -LiteralPath $DOC -Destination .\donor.md -Force
 & $REG diff $DOC .\donor.md
 & $REG replace $DOC .\donor.md --output .\replaced-output.md
-& $REG replace $DOC .\donor.md --sections 'index:38' --output .\replaced-index38.md
+& $REG replace $DOC .\donor.md --indexes 'index:38' --output .\replaced-index38.md
 
 WAL, transactions, schema:
 

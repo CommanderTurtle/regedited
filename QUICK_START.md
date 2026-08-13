@@ -1,6 +1,6 @@
 # Regedited Quick Start
 
-Regedited is a Rust CLI for treating one plaintext/markdown file as a fast indexed registry. It scans canonical `regedited open` trigger lines or compatible `## SECTION:` headers, then reads, writes, diffs, copies, and serves typed string, DB, and hex-word zone refs.
+Regedited is a Rust CLI for treating one plaintext file as a fast indexed registry. It scans exact lowercase `regedited open` trigger substrings, reads their following six structured lines, and works with typed string, exact-decimal, and absolute hex-word zone refs.
 
 ## 1. Install Rust
 
@@ -53,14 +53,17 @@ Linux/macOS binary:
 ```markdown
 anything before regedited open anything after is ignored
 index: 1
-0x0000008 : 0x0000008 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
-1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+0x0000007 : 0x0000007 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+1.125000000 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 First string line
 Second string line
 Third string line
----
 Hello from a zone.
 ```
+
+The marker plus those six lines is the complete index record. The following
+text is ordinary shared document content; zone one points to it explicitly by
+absolute line number. No divider or Markdown section is recognized.
 
 The trigger line has no name. The address is the following numeric index:
 

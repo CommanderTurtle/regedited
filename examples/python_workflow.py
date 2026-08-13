@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Example: Maintain a code snippets database with Regedited.
+"""Example: Maintain absolute code ranges with Regedited.
 
 This demonstrates the complete Regedited Python workflow:
-- Scanning sections
+- Scanning indexes
 - Extracting zone content
 - Appending new code
 - Copying between zones
@@ -29,53 +29,53 @@ def run(*args, **kwargs):
     return result.stdout
 
 
-def get_zone_content(path: str, section: str, zone: int) -> str:
+def get_zone_content(path: str, index: str, zone: int) -> str:
     """Extract raw zone content."""
-    return run("zone-extract", path, section, str(zone))
+    return run("zone-extract", path, index, str(zone))
 
 
-def set_zone_content(path: str, section: str, zone: int, content: str):
+def set_zone_content(path: str, index: str, zone: int, content: str):
     """Replace zone content entirely."""
     subprocess.run(
-        [REGEDITED, "zone-replace", path, section, str(zone), "--text", content],
+        [REGEDITED, "zone-replace", path, index, str(zone), "--text", content],
         check=True
     )
 
 
-def append_zone_content(path: str, section: str, zone: int, content: str):
+def append_zone_content(path: str, index: str, zone: int, content: str):
     """Append content to a zone."""
     subprocess.run(
-        [REGEDITED, "zone-append", path, section, str(zone), "--text", content],
+        [REGEDITED, "zone-append", path, index, str(zone), "--text", content],
         check=True
     )
 
 
-def copy_zone(path: str, from_sec: str, from_zone: int, to_sec: str, to_zone: int):
-    """Copy zone content between sections."""
+def copy_zone(path: str, from_index: str, from_zone: int, to_index: str, to_zone: int):
+    """Copy zone content between indexes."""
     subprocess.run(
         [REGEDITED, "zone-copy", path,
-         "--from", from_sec, "--from-zone", str(from_zone),
-         "--to", to_sec, "--to-zone", str(to_zone)],
+         "--from", from_index, "--from-zone", str(from_zone),
+         "--to", to_index, "--to-zone", str(to_zone)],
         check=True
     )
 
 
-def list_sections(path: str) -> str:
-    """List all sections."""
+def list_indexes(path: str) -> str:
+    """List all indexes."""
     return run("list", path)
 
 
-def scan_sections(path: str, name_filter: str = None) -> str:
-    """Scan sections with optional name filter."""
+def scan_indexes(path: str, index_filter: str = None) -> str:
+    """Scan indexes with an optional numeric filter."""
     args = ["scan", path]
-    if name_filter:
-        args.extend(["--filter", name_filter])
+    if index_filter:
+        args.extend(["--filter", index_filter])
     return run(*args)
 
 
-def get_zone_info(path: str, section: str, zone: int) -> dict:
+def get_zone_info(path: str, index: str, zone: int) -> dict:
     """Get machine-readable zone metadata."""
-    output = run("zone-info", path, section, str(zone))
+    output = run("zone-info", path, index, str(zone))
     info = {}
     content_lines = []
     in_content = False
@@ -92,19 +92,19 @@ def get_zone_info(path: str, section: str, zone: int) -> dict:
     return info
 
 
-def update_number(path: str, section: str, index: int, value: int):
+def update_number(path: str, registry_index: str, slot: int, value: str):
     """Update a database value."""
-    run("set-num", path, section, str(index), str(value))
+    run("set-num", path, registry_index, str(slot), value)
 
 
-def update_string(path: str, section: str, index: int, value: str):
+def update_string(path: str, registry_index: str, slot: int, value: str):
     """Update a string value."""
-    run("set-str", path, section, str(index), value)
+    run("set-str", path, registry_index, str(slot), value)
 
 
-def update_zone(path: str, section: str, zone: int, start: int, end: int, zone_type: str = "markdown"):
+def update_zone(path: str, registry_index: str, zone: int, start: int, end: int, zone_type: str = "markdown"):
     """Update a zone range with type."""
-    run("set-zone", path, section, str(zone), str(start), str(end),
+    run("set-zone", path, registry_index, str(zone), str(start), str(end),
         "--zone-type", zone_type)
 
 
@@ -113,22 +113,22 @@ def diff_files(path_a: str, path_b: str) -> str:
     return run("diff", path_a, path_b)
 
 
-def replace_sections(target: str, source: str, output: str = None, sections: list = None):
-    """Replace sections from source into target."""
+def replace_indexes(target: str, source: str, output: str = None, indexes: list = None):
+    """Replace fixed index records from source into target."""
     args = ["replace", target, source]
     if output:
         args.extend(["-o", output])
-    if sections:
-        args.append("-s")
-        args.extend(sections)
+    if indexes:
+        args.append("--indexes")
+        args.extend(indexes)
     run(*args)
 
 
-def fast_grep(path: str, pattern: str, section: str = None) -> str:
+def fast_grep(path: str, pattern: str, index: str = None) -> str:
     """Fast grep."""
     args = ["fgrep", path, pattern]
-    if section:
-        args.extend(["--section", section])
+    if index:
+        args.extend(["--index", index])
     return run(*args)
 
 
@@ -138,19 +138,19 @@ if __name__ == "__main__":
     DOC = "example.md"
 
     print("=" * 60)
-    print("1. LIST ALL SECTIONS")
+    print("1. LIST ALL INDEXES")
     print("=" * 60)
-    print(list_sections(DOC))
+    print(list_indexes(DOC))
 
     print("=" * 60)
     print("2. SCAN WITH FILTER")
     print("=" * 60)
-    print(scan_sections(DOC, "Code"))
+    print(scan_indexes(DOC, "200"))
 
     print("=" * 60)
     print("3. GET ZONE INFO")
     print("=" * 60)
-    info = get_zone_info(DOC, "CodeSnippets", 1)
+    info = get_zone_info(DOC, "i200", 1)
     print(f"Zone: {info['zone_index']}")
     print(f"Lines: {info['start_line']}-{info['end_line']}")
     print(f"Type: {info['zone_type']}")
@@ -161,7 +161,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("4. EXTRACT ZONE CONTENT")
     print("=" * 60)
-    code = get_zone_content(DOC, "CodeSnippets", 1)
+    code = get_zone_content(DOC, "i200", 1)
     print(f"Extracted {len(code)} bytes, {code.count(chr(10))} lines")
     print(code[:500])
 
@@ -178,13 +178,13 @@ pub fn greet(name: &str) -> String {
 }
 ```
 '''
-    append_zone_content(DOC, "CodeSnippets", 1, new_func)
+    append_zone_content(DOC, "i200", 1, new_func)
     print("Appended successfully!")
 
     print("=" * 60)
     print("6. VERIFY (extract again)")
     print("=" * 60)
-    updated = get_zone_content(DOC, "CodeSnippets", 1)
+    updated = get_zone_content(DOC, "i200", 1)
     print(f"Now {len(updated)} bytes, {updated.count(chr(10))} lines")
     assert "greet" in updated, "New function should be in content"
     print("Verified!")

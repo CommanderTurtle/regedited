@@ -28,24 +28,28 @@ How Regedited works internally — from memory layout to hex-word encoding.
 Regedited treats a plaintext markdown file like a **memory-mapped key-value store**. Instead of reading the entire file into RAM, it:
 
 1. **Memory-maps the file** via `memmap2` — the OS handles paging, only accessed pages touch RAM
-2. **Scans index openers** — a single pass finds canonical `"regedited open"` triggers and compatible `## SECTION:` markers
-3. **Builds an index** — a `BTreeMap<String, SectionInfo>` gives O(log n) section lookups
-4. **Jumps directly to content** — byte offsets in `SectionInfo` enable O(1) zone extraction
+2. **Scans index openers** — a single pass finds exact lowercase `"regedited open"` substrings
+3. **Builds an index** — a `BTreeMap<String, SectionInfo>` gives O(log n) record lookups
+4. **Resolves explicit content** — hex-word pairs select absolute shared-document line ranges
 5. **Patches with line deltas** — content-aware zone manipulation recalculates only affected hex-words
 6. **Resolves native refs** — `index:N:string:M`, `index:N:zone:M`, and `hex:A..B` specs address data without a SQL schema
 
-The result: a **10GB file with 1,000 sections uses ~200KB of Rust heap**. The file itself lives in OS-managed virtual memory.
+The source file itself remains OS-managed through a memory map during read-only
+scan operations. Rust-owned memory scales primarily with discovered index
+records and returned results, not with a second eager copy of the source.
 
 ### Comparison
 
-| Approach | 10GB File RAM | Startup | Section Jump |
-|----------|--------------|---------|--------------|
-| `cat + grep` | 10GB | O(n) | O(n) scan |
-| `ripgrep` | streaming | O(n) | O(n) scan |
-| Python readlines() | 10GB | O(n) | O(1) index |
-| **Regedited** | **~200KB** | **O(index openers)** | **O(1) byte offset** |
+| Approach | Source handling | Metadata | Addressing |
+|----------|-----------------|----------|------------|
+| `cat + grep` | streaming | none | repeated text scan |
+| `ripgrep` | streaming/mapped | none | repeated text scan |
+| Python `readlines()` | eager full-file list | caller-built | list index |
+| **Regedited** | **memory mapped for read scans** | **fixed records** | **explicit absolute ranges** |
 
-The Python readlines() approach loads everything into a Vec, giving O(1) jumps — but at the cost of 10GB RAM. Regedited gets the same O(1) jumps with 50,000x less memory.
+Unlike Python `readlines()`, the read-side scanner memory-maps the source and
+does not allocate a second copy of the entire document. Zone extraction uses
+the absolute ranges encoded in the hex-word line.
 
 ---
 
@@ -55,7 +59,7 @@ The Python readlines() approach loads everything into a Vec, giving O(1) jumps �
 2. **Human-readable format**: Plain markdown with hex-word annotations
 3. **Python-scriptable**: Clean stdout, subprocess-friendly
 4. **Windows-compatible**: Safe echo, clipboard support
-5. **Multi-GB capable**: O(1) section jumps, no full-file buffering
+5. **Multi-GB capable**: memory-mapped reads and bounded fixed-record metadata
 
 ---
 
@@ -68,12 +72,12 @@ src/
 │
 ├── CORE ENGINE
 ├── fast_ops.rs          # Scan, diff, replace, grep — safetensors-style header-only ops
-├── header.rs            # Canonical "regedited open" trigger parser + ## SECTION compatibility
+├── header.rs            # Canonical exact-lowercase "regedited open" trigger parser
 │                        # Zero-allocation exact byte search
 ├── zone.rs              # Zone extraction with type-prefixed content
 ├── zone_editor.rs       # Content-aware zone copy/append/replace with LineDelta recalculation
-├── store.rs             # High-level Store API with section caching
-├── ascii_store.rs       # Legacy module name for the hex-word line: 6 typed zone pairs
+├── store.rs             # High-level Store API with fixed-record caching
+├── ascii_store.rs       # Legacy module name for the hex-word line: 3 typed zone pairs
 ├── db_line.rs           # 9-value database + 3-string parser (pipe \| or tab, auto-detect)
 ├── zone_type.rs         # ZoneType enum (Markdown/Code/Media/Database) + hex-word codec
 │
@@ -89,9 +93,9 @@ src/
 ├── SERIOUS CONFIGURATION SUBSTRATE
 ├── wal.rs               # Write-ahead log: CRC32 checksummed, fsync'd, crash recovery
 ├── transaction.rs       # Begin/commit/rollback: all-or-nothing batch atomicity
-├── schema.rs            # Optional per-section type enforcement (string/int/bool/path/enum/array)
+├── schema.rs            # Optional per-index type enforcement (string/int/decimal/bool/path/enum/array)
 ├── typed_value.rs       # 10 registry types: REG_SZ/DWORD/QWORD/BINARY/MULTI_SZ/EXPAND_SZ/JSON/TOML/BOOL
-└── serve.rs             # HTTP container: sections, grep, state, refs, boolean queries
+└── serve.rs             # HTTP container: indexes, grep, state, refs, boolean queries
 
 docs/
 ├── ARCHITECTURE.md        # Full internals: data flow, memory layout, hex-word deep-dive
@@ -110,15 +114,15 @@ docs/
 ```
 File → MmapFile (zero-copy) → scan_content() → DocumentHeader
                                                     ↓
-                                            SectionInfo (offsets)
+                                            SectionInfo (record positions)
                                                     ↓
                                     extract_zone() → Zone (content + metadata)
 ```
 
 1. `MmapFile::open()` memory-maps the file
-2. `scan_content()` finds all canonical `"regedited open"` triggers and compatible `## SECTION:` headers in one pass
-3. `DocumentHeader` stores `SectionInfo` with line numbers and byte offsets
-4. `extract_zone()` uses byte offsets for O(1) jumps to content
+2. `scan_content()` finds all exact lowercase `"regedited open"` substrings in one pass
+3. `DocumentHeader` stores `SectionInfo` with fixed record line positions
+4. `extract_zone()` resolves the absolute line range encoded for that index
 
 ### Writing
 
@@ -132,7 +136,7 @@ Changes → Store.update_*() → content string manipulation
                           fs::write() (atomic file replace)
 ```
 
-1. `Store` caches section data to avoid repeated parsing
+1. `Store` caches fixed index data to avoid repeated parsing
 2. Changes are batched and applied via `update_lines()`
 3. If content size changes, `apply_line_deltas()` shifts all subsequent line numbers
 4. File is written atomically (no partial writes visible to readers)
@@ -151,7 +155,7 @@ Ref string → parse_ref_spec() → RefSpec enum
 
 Native refs are the command router for database-like behavior. They let one resolver handle all addressable storage shapes:
 
-- Section strings: `index:3:string:2`
+- Index strings: `index:3:string:2`
 - Numeric DB cells: `index:3:db:8`
 - Full DB lines: `index:3:dbline`
 - Hex-word lines: `index:3:hexline` (`index:3:ascii` remains a legacy alias)
@@ -197,7 +201,7 @@ Target zone → replace_zone_content() ← new content
 When a zone's content grows or shrinks:
 1. The content is spliced in at the correct line range
 2. A `LineDelta` is calculated: `(new_line_count - old_line_count)`
-3. `apply_line_deltas()` scans all sections and shifts hex-word line numbers
+3. `apply_line_deltas()` scans all index records and shifts hex-word line numbers
 4. Every zone boundary stays consistent with the new document structure
 
 ---
@@ -214,27 +218,30 @@ pub struct DocumentHeader {
 }
 ```
 
-The `BTreeMap` keeps sections in name order. Lookups are O(log n). Each `SectionInfo` contains pre-computed line numbers for every line in the section's metadata block.
+The `BTreeMap` keeps internal index keys in order. Lookups are O(log n). The
+public type retains its historical `SectionInfo` name, but it contains only
+the marker and six fixed record-line positions.
 
 ### SectionInfo
 
 ```rust
 pub struct SectionInfo {
     pub name: String,
-    pub header_line: usize,       // canonical regedited open trigger or legacy ## SECTION: Name
+    pub registry_index: Option<u64>, // numeric identity from index: N
+    pub header_line: usize,       // line containing canonical regedited open substring
     pub index_line: usize,        // 123
     pub ascii_line: usize,        // hex-word line
     pub numeric_line: usize,      // 1 2 3 4 5...
     pub string1_line: usize,      // "first string"
     pub string2_line: usize,      // "second string"
     pub string3_line: usize,      // "third string"
-    pub separator_line: usize,    // ---
-    pub content_start: usize,     // first content line
-    pub content_end: usize,       // last content line
+    pub header_byte_offset: usize,// marker byte offset
 }
 ```
 
-All line numbers are pre-computed during the scan phase. No re-scanning needed for O(1) access to any line.
+All seven fixed record positions are computed during the scan phase. Absolute
+zone extraction subsequently resolves the requested line range in the shared
+document.
 
 ### Hex-Word Line (`AsciiStore` Legacy Type)
 
@@ -258,7 +265,7 @@ The public Rust type is still named `AsciiStore` for compatibility, but the conc
 
 ```rust
 pub struct DbLine {
-    pub numbers: [i64; 9],
+    pub numbers: [DecimalValue; 9], // arbitrary-precision fixed decimals
     pub strings: [String; 3],
 }
 ```
@@ -343,7 +350,9 @@ fn decode_hex_word(hex_word: u32) -> (ZoneType, u32) {
 }
 ```
 
-No string parsing — pure bit masking. This is why zone lookups are O(1).
+Each nine-character word is parsed once into a type nibble and 28-bit line
+number. The bit-field decode itself is constant time; extracting the addressed
+text still resolves the absolute line range in the document.
 
 ---
 
@@ -381,7 +390,7 @@ regedited ref-bool doc.md index:3:db:8 gte 10 --then-val HOT --else-val HOLD
 
 ### State and Undo
 
-`state` emits a JSON snapshot containing section names, indexes, hex-word lines, DB values, strings, zone lengths, and checksums. `state-compare` compares a later file against that JSON. This is not a history engine; it is a fast truth snapshot for automation.
+`state` emits a JSON snapshot containing numeric indexes, internal compatibility keys, hex-word lines, DB values, strings, zone lengths, and checksums. `state-compare` compares a later file against that JSON. This is not a history engine; it is a fast truth snapshot for automation.
 
 Write commands that route through native refs create one safety copy at `<file>.undo`. `undo <file>` restores that copy. The intent is simple recovery, not long-term version history.
 
@@ -396,7 +405,7 @@ regedited undo doc.md
 
 ## Document Format Specification
 
-Each section follows a strict structure:
+Every recognized opener has exactly six structured lines after it:
 
 ```markdown
 <!-- anything regedited open anything -->
@@ -406,9 +415,10 @@ Each section follows a strict structure:
 <String 1>
 <String 2>
 <String 3>
----
-<Markdown Content>
 ```
+
+That is the complete record. No divider, Markdown section, or implicit body
+belongs to it.
 
 ### Complete Example
 
@@ -420,7 +430,6 @@ index: 200
 main.rs core logic
 utility functions
 database connection code
----
 ## Main Logic
 
 ```rust
@@ -434,29 +443,30 @@ fn main() {
 
 | Offset from Header | Content | Example | Notes |
 |--------------------|---------|---------|-------|
-| +0 | any line containing `regedited open` | `<!-- arbitrary wrapper regedited open arbitrary suffix -->` | Canonical index opener; surrounding text ignored; `index: <N>` is the address. `## SECTION:` also accepted |
+| +0 | any line containing `regedited open` | `<!-- arbitrary wrapper regedited open arbitrary suffix -->` | Only canonical opener; surrounding text ignored; `index: <N>` is the address |
 | +1 | `index: <N>` | `index: 200` | Human-readable index |
 | +2 | Hex-Word Line | `0x0000000 : ...` | 6 hex-words, colon-separated |
 | +3 | Database Line | `42 \| 7 \| 3 \| ...` | 9 values, pipe-separated (Obsidian-friendly) |
 | +4 | String 1 | `main.rs core logic` | Description/label |
 | +5 | String 2 | `utility functions` | Notes |
 | +6 | String 3 | `database connection code` | Reference |
-| +7 | Separator | `---` | Content boundary |
-| +8 | Content Start | Markdown content begins | Opaque to Regedited |
+The record ends at `+6`. All other document text is shared; only explicit
+hex-word zones provide bounded absolute line ranges.
 
 ### Content Area
 
-Standard markdown. Content is opaque to Regedited — it is not parsed. Zones point into this area by line number.
+All non-record text is opaque to Regedited and remains shared. Zones may point
+to any absolute line range in the file; no marker owns the surrounding text.
 
 ### Multi-GB File Considerations
 
 For files larger than available RAM:
 
 1. **Memory mapping**: Files are accessed via `memmap2` for zero-copy reads
-2. **Header scan only**: `scan` reads ~100 bytes per section header, not the full file
-3. **Line offsets**: The scanner builds an index of `(line_number, byte_offset)` pairs
-4. **Zone extraction**: Uses byte offsets for O(1) jumps to any line
-5. **No full-file buffering**: Content is sliced from the mmap, never copied
+2. **Header scan only**: `scan` reads the fixed record lines, not an implicit body
+3. **Record positions**: The scanner keeps the seven physical record positions
+4. **Zone extraction**: Resolves only the explicitly encoded absolute line range
+5. **No eager source copy**: Read-side scans borrow the memory-mapped UTF-8 text
 
 The 28-bit line number limit (268,435,455 lines) supports files up to roughly 50-100GB with average line lengths of 50-100 bytes.
 
@@ -468,24 +478,24 @@ The 28-bit line number limit (268,435,455 lines) supports files up to roughly 50
 
 | Command | Args | Description |
 |---------|------|-------------|
-| `list` | `<file>` | List all sections |
+| `list` | `<file>` | List all indexes |
 | `scan` | `<file> [--filter <pat>] [--value <i:min:max>]` | Header-only scan |
-| `db` | `<file> <section>` | Show database table |
-| `hexline` | `<file> <section>` | Show hex-word line |
-| `ascii` | `<file> <section>` | Legacy alias for `hexline` |
+| `db` | `<file> <index>` | Show database table |
+| `hexline` | `<file> <index>` | Show hex-word line |
+| `ascii` | `<file> <index>` | Legacy alias for `hexline` |
 | `info` | `<file>` | Full document info |
 | `summary` | `<file>` | Document summary |
-| `content` | `<file> <section>` | Section markdown content |
+| `content` | `<file> <index>` | Validate the index, then print the shared document |
 
 ### Grep & Extract
 
 | Command | Args | Description |
 |---------|------|-------------|
-| `fgrep` | `<file> <pattern> [-s <section>]` | Memory-mapped grep |
+| `fgrep` | `<file> <pattern> [--index <index>]` | Memory-mapped shared-file grep |
 | `fgrep-multi` | `<file> <p1> <p2>...` | Multi-pattern OR grep |
-| `grep` | `<file> <section> <zone>` | Extract zone by index |
-| `zone-extract` | `<file> <section> <zone>` | Raw zone to stdout |
-| `zone-info` | `<file> <section> <zone>` | Machine-readable zone meta |
+| `grep` | `<file> <index> <zone>` | Extract zone by numeric index |
+| `zone-extract` | `<file> <index> <zone>` | Raw zone to stdout |
+| `zone-info` | `<file> <index> <zone>` | Machine-readable zone metadata |
 | `lines` | `<file> <start> <end>` | Arbitrary line range |
 
 ### Zone Manipulation
@@ -526,8 +536,8 @@ The 28-bit line number limit (268,435,455 lines) supports files up to roughly 50
 | `set-num` | `<file> <S> <i> <v>` | Update numeric value (0-8) |
 | `set-str` | `<file> <S> <i> <v>` | Update string (0-2) |
 | `set-zone` | `<file> <S> <z> <s> <e> [-t <type>]` | Update zone range+type |
-| `add` | `<file> <section>` | Add new section |
-| `rm` | `<file> <section>` | Remove section |
+| `add` | `<file> <index>` | Add one canonical seven-line index record |
+| `rm` | `<file> <index>` | Remove one canonical seven-line index record |
 | `new` | `<file> <title>` | Create new document |
 
 ### Encapsulation (shel.sh/XML)
@@ -558,7 +568,7 @@ The 28-bit line number limit (268,435,455 lines) supports files up to roughly 50
 | Command | Args | Description |
 |---------|------|-------------|
 | `diff` | `<a> <b>` | Metadata-only diff |
-| `replace` | `<target> <source> [-o <out>] [-s <s1> <s2>]` | Patch sections |
+| `replace` | `<target> <source> [-o <out>] [-s <i1> <i2>]` | Patch fixed records by numeric index |
 
 ### WAL (Crash Safety)
 
@@ -598,7 +608,7 @@ The 28-bit line number limit (268,435,455 lines) supports files up to roughly 50
 
 | Command | Args | Description |
 |---------|------|-------------|
-| `serve` | `--file <f> [--port <n>] [--read-only <b>]` | HTTP server with section, state, ref, and query endpoints |
+| `serve` | `--file <f> [--port <n>] [--read-only <b>]` | HTTP server with index, state, ref, and query endpoints |
 
 ---
 
@@ -608,14 +618,14 @@ Serve mode is intentionally thin. It exposes the same native scan/ref/bool logic
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/` | Server status + section list |
-| GET | `/sections` | List all sections |
-| GET | `/section/{name}` | Section metadata |
-| GET | `/section/{name}/db` | Database table |
-| GET | `/section/{name}/hexline` | Hex-word line |
-| GET | `/section/{name}/ascii` | Legacy alias for `/hexline` |
-| GET | `/section/{name}/zone/{i}` | Zone content |
-| GET | `/grep?pattern={p}&section={s}` | Search |
+| GET | `/` | Server status + index list |
+| GET | `/sections` | List all indexes; legacy route spelling |
+| GET | `/section/{index}` | Fixed-record metadata; legacy route spelling |
+| GET | `/section/{index}/db` | Database table |
+| GET | `/section/{index}/hexline` | Hex-word line |
+| GET | `/section/{index}/ascii` | Legacy alias for `/hexline` |
+| GET | `/section/{index}/zone/{i}` | Absolute zone content |
+| GET | `/grep?pattern={p}&index={i}` | Search the shared document after validating an index |
 | GET | `/state` | Current native Regedited state JSON |
 | GET | `/ref?spec={spec}` | Read any native ref spec |
 | GET | `/ref-bool?left={a}&op={op}&right={b}` | Boolean comparison over refs/literals |
@@ -678,14 +688,14 @@ def regedited(*args):
 ```python
 # Extract zone content to a variable
 result = subprocess.run(
-    [REGEDITED, "zone-extract", "document.md", "CodeSnippets", "1"],
+    [REGEDITED, "zone-extract", "document.md", "i200", "1"],
     capture_output=True, text=True, check=True
 )
 code_block = result.stdout
 
 # Machine-readable zone info
 result = subprocess.run(
-    [REGEDITED, "zone-info", "document.md", "CodeSnippets", "1"],
+    [REGEDITED, "zone-info", "document.md", "i200", "1"],
     capture_output=True, text=True, check=True
 )
 info = {}
@@ -700,17 +710,17 @@ for line in result.stdout.strip().split('\n'):
 ### Content Manipulation
 
 ```python
-# Copy zone between sections
+# Copy one absolute zone range between indexes
 subprocess.run([
     REGEDITED, "zone-copy", "document.md",
-    "--from", "CodeSnippets", "--from-zone", "1",
-    "--to", "MySection", "--to-zone", "0"
+    "--from", "i200", "--from-zone", "1",
+    "--to", "i300", "--to-zone", "0"
 ], check=True)
 
 # Append from Python string
 subprocess.run([
-    REGEDITED, "zone-append", "document.md", "CodeSnippets", "1",
-    "--text", "\n## New Section\n\nNew content here."
+    REGEDITED, "zone-append", "document.md", "i200", "1",
+    "--text", "\n## New Content\n\nNew content here."
 ], check=True)
 ```
 
@@ -719,7 +729,7 @@ subprocess.run([
 ```python
 # Exit code 0 = TRUE, 1 = FALSE
 result = subprocess.run(
-    [REGEDITED, "bool-and", "doc.md", "CodeSnippets", "fn", "rust"],
+    [REGEDITED, "bool-and", "doc.md", "i200", "fn", "rust"],
     capture_output=True, text=True
 )
 if result.returncode == 0:
@@ -751,17 +761,18 @@ result = subprocess.run(
 
 ## Memory Layout
 
-For a 10GB file with 1,000 sections:
+For a large file, read-only metadata scans allocate approximately as follows:
 
 | Component | Memory |
 |-----------|--------|
-| File mapping | ~0 bytes (OS-managed) |
-| DocumentHeader | ~200KB (1,000 x SectionInfo) |
-| Section cache | ~0 bytes (on-demand) |
-| Zone content | ~0 bytes (sliced from mmap) |
-| **Total** | **~200KB** |
+| File mapping | OS-managed virtual-memory pages |
+| DocumentHeader | O(index records) |
+| Record cache | On demand |
+| Returned grep/zone content | O(returned bytes) |
 
-The entire file is never loaded into Rust's heap. Only metadata is allocated.
+Read-only mapped scans avoid an eager second source copy. Mutating operations
+still construct rewritten content because they must produce a complete updated
+plaintext file.
 
 ---
 
@@ -769,14 +780,14 @@ The entire file is never loaded into Rust's heap. Only metadata is allocated.
 
 | Operation | Time | Memory | Notes |
 |-----------|------|--------|-------|
-| `scan` | O(n) on index openers | O(1) | Reads ~100 bytes per section metadata block |
-| `fgrep` | O(n) on matches | O(1) | Memory-mapped, no buffering |
-| `zone-extract` | O(1) | O(content) | Byte offset jump |
-| `zone-replace` | O(sections) | O(file) | Must rewrite + recalculate |
-| `diff` | O(sections) | O(1) | Metadata only |
-| `replace` | O(sections) | O(file) | Per-section patches |
-| `bool-*` | O(content) | O(1) | Single scan per pattern |
-| `grab-html` | O(lines) | O(1) | Streaming per line |
+| `scan` | O(file lines) | O(indexes) | Retains fixed record metadata |
+| `fgrep` | O(file lines) | O(matches) | Memory-mapped source; owns matches |
+| `zone-extract` | O(file lines) | O(zone bytes) | Absolute line-range resolution |
+| `zone-replace` | O(indexes) | O(file) | Must rewrite + recalculate |
+| `diff` | O(file lines + indexes) | O(indexes) | Compares retained metadata |
+| `replace` | O(indexes) | O(file) | Fixed-record patches |
+| `bool-*` | O(patterns x content) | O(matches) | Shared-document matching |
+| `grab-html` | O(lines) | O(matches) | Streaming per line |
 
 ---
 
@@ -797,7 +808,7 @@ pub enum RegeditedError {
 }
 ```
 
-All errors include context (section name, line number, etc.) for debugging.
+Errors include numeric-index and line context for debugging.
 
 ---
 
@@ -874,7 +885,9 @@ Transactions use WAL internally for durability. The registry cannot do this. Pow
 
 ### 3. Schema Enforcement — `src/schema.rs`
 
-Optional per-section schemas for type-safe configuration. Something the Windows Registry has never had.
+Optional per-index schemas for type-safe configuration. The separate schema
+file retains `section` as its schema-group keyword; it does not define document
+sections.
 
 ```bash
 # Generate starter schema from document
@@ -896,7 +909,7 @@ section Config
 ---
 ```
 
-Supported types: `string`, `int`, `bool`, `path`, `enum`, `array`, `hex`
+Supported types: `string`, `int`, `decimal`, `bool`, `path`, `enum`, `array`, `hex`
 Supported constraints: `required`, `optional`, `range(min, max)`, `one_of(a, b, c)`, `default(val)`, `pattern(regex)`
 
 ### 4. Typed Values — `src/typed_value.rs`
@@ -936,13 +949,13 @@ regedited serve --file config.regd --port 5000
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/` | Server status + section list |
-| GET | `/sections` | List all sections |
-| GET | `/section/{name}` | Section metadata |
-| GET | `/section/{name}/db` | Database table |
-| GET | `/section/{name}/hexline` | Hex-word line |
-| GET | `/section/{name}/ascii` | Legacy alias for `/hexline` |
-| GET | `/section/{name}/zone/{i}` | Zone content |
+| GET | `/` | Server status + index list |
+| GET | `/sections` | List all indexes; route name retained for compatibility |
+| GET | `/section/{index}` | Fixed index metadata; route name retained for compatibility |
+| GET | `/section/{index}/db` | Database table |
+| GET | `/section/{index}/hexline` | Hex-word line |
+| GET | `/section/{index}/ascii` | Legacy alias for `/hexline` |
+| GET | `/section/{index}/zone/{i}` | Absolute zone content |
 | GET | `/grep?pattern={p}` | Search |
 | GET | `/state` | Current native Regedited state JSON |
 | GET | `/ref?spec={spec}` | Read a native ref spec |
@@ -954,7 +967,7 @@ regedited serve --file config.regd --port 5000
 
 ```bash
 curl http://localhost:5000/sections
-curl http://localhost:5000/section/Config/db
+curl http://localhost:5000/section/200/db
 curl "http://localhost:5000/grep?pattern=enabled"
 curl "http://localhost:5000/ref?spec=index:3:string:1"
 curl "http://localhost:5000/ref-bool?left=index:3:db:8&op=gte&right=10"
@@ -980,7 +993,7 @@ cargo test --release    # Release mode (faster)
 ## Future Extensions
 
 - **Regex grep**: Add regex support to `fgrep`
-- **Parallel scan**: Multi-threaded section scanning
+- **Parallel scan**: Multi-threaded index-record scanning
 - **Compression**: Optional gzip for large files
 - **Remote**: SSH-backed file access
 - **Watch mode**: Auto-reload on file changes

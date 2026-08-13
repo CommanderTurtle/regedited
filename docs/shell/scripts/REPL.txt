@@ -18,7 +18,7 @@ rgd st
 
 To test a write safely, first work on a copy, then use:
 
-rgd ss ProjectConfig 0 "updated from the interactive walkthrough"
+rgd ss i38 0 "updated from the interactive walkthrough"
 rgd rs i38s2 --text "updated through a native compact ref"
 rgd u
 

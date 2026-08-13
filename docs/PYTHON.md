@@ -1,336 +1,169 @@
 # Python Scripting Guide
 
-See [ARCHITECTURE.md](ARCHITECTURE.md#python-integration) for the complete Python integration guide with examples.
+Python should orchestrate the compiled Regedited process. Regedited keeps the
+file grammar, exact-decimal handling, zone relocation, and crash-safety logic;
+Python supplies ordinary control flow.
 
-For more in-depth example shells, see the shells folder
+The executable is also its own example catalog:
 
-This file is kept for backward compatibility. All documentation has been consolidated into ARCHITECTURE.md.
- Python calls. This mirrors how your safetensors workflow works — Python orchestrates, Rust performs.
-
-## Installation
-
-```bash
-# Clone and build
-git clone https://github.com/CommanderTurtle/regedited regedited
-cd regedited
-cargo build --release
-
-# Add to PATH or use absolute path
-cp target/release/regedited ~/.local/bin/
+```powershell
+rgd --help --ex 3
+rgd rg --help --ex 3
+rgd rb --help --ex 3
 ```
 
-## Basic Usage
+Shell number `3` always means Python. See
+[`shell/PYTHON.txt`](shell/PYTHON.txt) for the complete subprocess cookbook.
+
+## Process Wrapper
 
 ```python
-import subprocess
+from pathlib import Path
 import shutil
+import subprocess
 
-REGEDITED = shutil.which("regedited") or "./target/release/regedited"
+RGD = shutil.which("rgd") or shutil.which("regedited")
+if RGD is None:
+    raise RuntimeError("Build Regedited and place rgd or regedited on PATH")
 
-def regedited(*args):
-    """Call regedited with arguments, return stdout."""
-    result = subprocess.run(
-        [REGEDITED, *args],
+DOC = Path("document.md")
+
+def run(*args: object, input_text: str | None = None) -> str:
+    completed = subprocess.run(
+        [RGD, *(str(arg) for arg in args)],
+        input=input_text,
         capture_output=True,
         text=True,
-        check=True
+        check=True,
     )
-    return result.stdout
+    return completed.stdout
 ```
 
-## Section Scanning
+## Canonical Index Reads
+
+The exact lowercase substring `regedited open` identifies a record marker.
+Its following six lines are the complete record. Numeric `index: N` is the
+identity; surrounding document text is shared and only absolute zones bound
+content.
 
 ```python
-# Fast scan — reads only metadata, not content
-output = regedited("scan", "document.md")
-print(output)
-# Scan: 4 sections in document.md (safetensors-style header scan)
-#   [ 100] ProjectConfig     DB:[1 100 50 200 25 75 10 20 30] Zones:[none] Lines:21
-#   [ 200] CodeSnippets      DB:[42 7 3 256 1024 4096 100 200 300] Zones:[Z1:60..66[CODE]] Lines:35
+print(run("list", DOC))
+print(run("scan", DOC))
+print(run("db", DOC, "i64"))
+print(run("hexline", DOC, "i64"))
+print(run("index-str-list", DOC, 64))
 
-# Filtered scan
-output = regedited("scan", "document.md", "--filter", "Code")
-
-# Scan with value filter
-output = regedited("scan", "document.md", "--value", "0:10:100")
+second_string = run("ref-get", DOC, "index:64:string:2").rstrip("\n")
+seventh_decimal = run("ref-get", DOC, "index:64:db:7").rstrip("\n")
 ```
 
-## Zone Content Extraction
+`content` validates the selected index, then returns the complete shared
+document. It does not infer an index-owned body.
 
 ```python
-# Extract zone content to a variable
-result = subprocess.run(
-    [REGEDITED, "zone-extract", "document.md", "CodeSnippets", "1"],
-    capture_output=True, text=True, check=True
-)
-code_block = result.stdout
-print(f"Extracted {len(code_block)} bytes")
-
-# Extract zone info (machine-readable)
-result = subprocess.run(
-    [REGEDITED, "zone-info", "document.md", "CodeSnippets", "1"],
-    capture_output=True, text=True, check=True
-)
-
-# Parse the output
-info = {}
-for line in result.stdout.strip().split('\n'):
-    if line == '---CONTENT---':
-        break
-    if '=' in line:
-        key, value = line.split('=', 1)
-        info[key] = value
-
-print(f"Zone: {info['zone_index']}")
-print(f"Lines: {info['start_line']}-{info['end_line']}")
-print(f"Type: {info['zone_type']}")  # CODE
-print(f"Line count: {info['line_count']}")
+shared_document = run("content", DOC, "i64")
 ```
 
-## Zone Content Manipulation
+## Exact Decimals and Boolean Routing
 
-### Copy Between Sections
+DB values are exact fixed-point decimals. They are not coerced through a
+binary floating-point value.
 
 ```python
-# Copy zone 1 from CodeSnippets to zone 0 of MySection
-subprocess.run(
-    [REGEDITED, "zone-copy", "document.md",
-     "--from", "CodeSnippets", "--from-zone", "1",
-     "--to", "MySection", "--to-zone", "0"],
-    check=True
-)
+run("set-num", DOC, "i64", 0, "0.102000000")
+
+decision = run(
+    "ref-bool", DOC,
+    "i64db1", "lte", "i70db4",
+    "--then-val", "1",
+    "--else-val", "0",
+).strip()
+
+if decision == "1":
+    pair = run("convert", "b", 58, 59).strip()
+    run("zone-append", DOC, "i64", 1, "--text", pair)
 ```
 
-### Append Content
+## Zone Reads and Writes
+
+The older direct zone commands use zero-based slots `0..2`. Native compact
+references such as `i64z1` use human-facing zones `1..3`.
 
 ```python
-# Append from a Python string
-subprocess.run(
-    [REGEDITED, "zone-append", "document.md", "CodeSnippets", "1",
-     "--text", "\n## New Section\n\nNew content here."],
-    check=True
+raw = run("zone-extract", DOC, "i64", 0)
+metadata = run("zone-info", DOC, "i64", 0)
+
+run("zone-replace", DOC, "i64", 0, input_text="replacement\ntext\n")
+run("zone-append", DOC, "i64", 0, input_text="appended line\n")
+
+# Copy absolute zone content between numeric indexes.
+run(
+    "zone-copy", DOC,
+    "--from", "i64", "--from-zone", 0,
+    "--to", "i70", "--to-zone", 1,
 )
 
-# Append from a file
-with open("new_functions.md", "r") as f:
-    subprocess.run(
-        [REGEDITED, "zone-append", "document.md", "CodeSnippets", "1"],
-        stdin=f, check=True
-    )
-
-# Append from a Python variable via stdin
-content = """
-## Utility Functions
-
-```rust
-pub fn new_util() -> String {
-    "utility".to_string()
-}
-```
-"""
-subprocess.run(
-    [REGEDITED, "zone-append", "document.md", "CodeSnippets", "1"],
-    input=content, text=True, check=True
-)
+# The native-ref equivalent uses one-based zones.
+run("ref-copy", DOC, "i64z1", "i70z2")
 ```
 
-### Replace Content
+Any line range can be addressed independently of an index:
 
 ```python
-# Replace zone content entirely
-new_content = """```rust
-fn main() {
-    let x = 42;
-    println!("{}", x);
-}
-```
-"""
-subprocess.run(
-    [REGEDITED, "zone-replace", "document.md", "CodeSnippets", "1",
-     "--text", new_content],
-    check=True
-)
+print(run("hex-extract", DOC, "1x000003A", "1x0000040"))
+print(run("lines", DOC, 58, 64))
 ```
 
-### Pipe Between Zones
+## Search
+
+An index-scoped `fgrep` validates the numeric index and searches the shared
+document. The legacy `--section` option spelling remains an alias for
+`--index`; it does not create a content section.
 
 ```python
-# Extract from one zone, transform in Python, append to another
-result = subprocess.run(
-    [REGEDITED, "zone-extract", "document.md", "CodeSnippets", "1"],
-    capture_output=True, text=True, check=True
-)
-extracted = result.stdout
-
-# Transform in Python
-transformed = extracted.replace("fn main", "pub fn main")
-
-# Write to another zone
-subprocess.run(
-    [REGEDITED, "zone-replace", "document.md", "ExportedCode", "0",
-     "--text", transformed],
-    check=True
-)
+print(run("fgrep", DOC, "TODO"))
+print(run("fgrep", DOC, "TODO", "--index", "i64"))
+print(run("fgrep-multi", DOC, "TODO", "FIXME", "SAFETY"))
 ```
 
-## Database Value Updates
+## Guarded Relocation
 
 ```python
-# Update specific values
-regedited("set-num", "document.md", "ProjectConfig", "0", "999")
-regedited("set-num", "document.md", "ProjectConfig", "5", "42")
-
-# Update strings
-regedited("set-str", "document.md", "ProjectConfig", "0", "/home/user/project")
-regedited("set-str", "document.md", "ProjectConfig", "2", "https://github.com/user/repo")
-
-# Update zone range with type
-regedited("set-zone", "document.md", "CodeSnippets", "1", "60", "66",
-       "--zone-type", "code")
+run("commit", DOC)       # save the current compact checkpoint
+# An external editor moves lines here.
+print(run("check", DOC)) # calculate the guarded relocation proposal
+print(run("pull", DOC))  # apply only the safe proposal
 ```
 
-## Diff and Replace (Safetensors-Style)
+`commit --pull` combines checking and safe application. Checkpoints store
+zone fingerprints and anchors, not document history.
+
+## Metadata Diff, Replacement, and State
 
 ```python
-# Diff two files
-output = regedited("diff", "base.md", "patched.md")
-print(output)
-
-# Replace all matching sections from source into target
-subprocess.run(
-    [REGEDITED, "replace", "base.md", "patched.md", "-o", "result.md"],
-    check=True
+print(run("diff", "base.md", "donor.md"))
+run(
+    "replace", "base.md", "donor.md",
+    "--indexes", "i64", "i70",
+    "--output", "patched.md",
 )
 
-# Replace specific sections only
-subprocess.run(
-    [REGEDITED, "replace", "base.md", "patched.md",
-     "-s", "CodeSnippets", "Documentation",
-     "-o", "result.md"],
-    check=True
-)
+Path("state.json").write_text(run("state", DOC), encoding="utf-8")
+print(run("state-compare", DOC, "state.json"))
 ```
 
-## Fast Grep
-
-```python
-# Grep entire file
-result = subprocess.run(
-    [REGEDITED, "fgrep", "document.md", "fn "],
-    capture_output=True, text=True, check=True
-)
-for line in result.stdout.strip().split('\n')[2:]:  # Skip header
-    if line.startswith('  '):
-        print(line.strip())
-
-# Grep within a section
-result = subprocess.run(
-    [REGEDITED, "fgrep", "document.md", "fn ", "--section", "CodeSnippets"],
-    capture_output=True, text=True, check=True
-)
-
-# Multi-pattern grep
-result = subprocess.run(
-    [REGEDITED, "fgrep-multi", "document.md", "rust", "fn", "struct"],
-    capture_output=True, text=True, check=True
-)
-```
-
-## Complete Workflow Example
-
-```python
-#!/usr/bin/env python3
-"""Example: Maintain a code snippets database with Regedited."""
-
-import subprocess
-import shutil
-
-REGEDITED = shutil.which("regedited") or "./target/release/regedited"
-
-def run(*args, **kwargs):
-    """Run regedited command."""
-    result = subprocess.run(
-        [REGEDITED, *args],
-        capture_output=True, text=True,
-        **kwargs
-    )
-    if result.returncode != 0:
-        print(f"Error: {result.stderr}")
-        raise RuntimeError(f"regedited {' '.join(args)} failed")
-    return result.stdout
-
-def get_zone_content(path: str, section: str, zone: int) -> str:
-    """Extract zone content."""
-    return run("zone-extract", path, section, str(zone))
-
-def set_zone_content(path: str, section: str, zone: int, content: str):
-    """Replace zone content."""
-    subprocess.run(
-        [REGEDITED, "zone-replace", path, section, str(zone), "--text", content],
-        check=True
-    )
-
-def append_zone_content(path: str, section: str, zone: int, content: str):
-    """Append to zone content."""
-    subprocess.run(
-        [REGEDITED, "zone-append", path, section, str(zone), "--text", content],
-        check=True
-    )
-
-def list_sections(path: str):
-    """List all sections."""
-    return run("list", path)
-
-def scan_sections(path: str, name_filter: str = None):
-    """Scan sections with optional name filter."""
-    args = ["scan", path]
-    if name_filter:
-        args.extend(["--filter", name_filter])
-    return run(*args)
-
-# Example workflow
-if __name__ == "__main__":
-    DOC = "snippets.md"
-    
-    # List all sections
-    print("=== Sections ===")
-    print(list_sections(DOC))
-    
-    # Get the main code block
-    print("=== Main Code ===")
-    code = get_zone_content(DOC, "CodeSnippets", 1)
-    print(code[:500])
-    
-    # Append a new function
-    print("\n=== Appending new function ===")
-    new_func = '''
-
-pub fn greet(name: &str) -> String {
-    format!("Hello, {}!", name)
-}
-'''
-    append_zone_content(DOC, "CodeSnippets", 1, new_func)
-    
-    # Verify
-    print("=== Updated code ===")
-    updated = get_zone_content(DOC, "CodeSnippets", 1)
-    print(f"Now {len(updated)} bytes")
-```
+Replacement patches only the marker and six fixed metadata lines for matching
+numeric indexes. It never invents or transfers an implicit body.
 
 ## Error Handling
 
-All commands exit with non-zero status on error:
-
 ```python
 try:
-    subprocess.run([REGEDITED, "grep", "doc.md", "Nonexistent", "0"], check=True)
-except subprocess.CalledProcessError as e:
-    print(f"Error: {e.stderr}")
-    # Error: Section 'Nonexistent' not found
+    run("ref-get", DOC, "index:999:db:1")
+except subprocess.CalledProcessError as error:
+    print(error.stderr)
 ```
 
-Common errors:
-- `Section 'X' not found` — section name doesn't exist
-- `Zone index N out of range (0-2)` — zone index must be 0, 1, or 2
-- `Zone N is empty (0x0000000 : 0x0000000)` — zone has no content to extract
-- `Hex-word line must have 6 values separated by ' : '` — malformed hex-word line
+All command failures use a nonzero exit status. Typical causes are a missing
+numeric index, an undefined zone pair, an out-of-range slot, malformed
+hex-words, or an invalid exact-decimal literal.

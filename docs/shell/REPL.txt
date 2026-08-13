@@ -53,7 +53,7 @@ i38r2           index:38:range:2
 i38zh3          index:38:zonehex:3
 i38rh1          index:38:rangehex:1
 
-Reference slots are user-facing and 1-based. Legacy section-oriented commands
+Reference slots are user-facing and 1-based. Older direct index commands
 retain their documented 0-based slots.
 
 REFERENCE OPERATIONS WITH A LOADED FILE

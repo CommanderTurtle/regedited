@@ -1,17 +1,19 @@
 # Regedited Example Document
 
 This document demonstrates the structured plaintext database format (v3).
-Each section has:
+Each index record has:
 - An **index** in `index: N` format (human-readable, Obsidian-friendly)
 - A **hex-word store** (6 hex-words with embedded type nibbles, colon-separated)
-- **9 pipe-separated numeric values** (` | ` — renders in any markdown viewer)
+- **9 pipe-separated exact decimal values** (` | ` — renders in any markdown viewer)
 - **3 string lines** (one per line)
-- A `---` separator before content
+
+Index records do not own nearby prose. Zone hex-words point to absolute lines
+anywhere in the shared file.
 
 ## Hex-Word Format
 
 ```
-0xTLLLLLLL : 0xTLLLLLLL : 0xTLLLLLLL : 0xTLLLLLLL : 0xTLLLLLLL : 0xTLLLLLLL
+TxLLLLLLL : TxLLLLLLL : TxLLLLLLL : TxLLLLLLL : TxLLLLLLL : TxLLLLLLL
 ```
 
 Where `T` = type nibble, `LLLLLLL` = line number (28 bits = 268M max)
@@ -23,19 +25,16 @@ Where `T` = type nibble, `LLLLLLL` = line number (28 bits = 268M max)
 | Media | `2` | Images, audio, video |
 | Database | `3` | Tabular data, structured content |
 
----
-
-## SECTION: ProjectConfig
+regedited open
 index: 100
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 1 | 100 | 50 | 200 | 25 | 75 | 10 | 20 | 30
 project root path
 config notes here
 https://github.com/user/project
----
 # Project Configuration
 
-This section contains the main project configuration.
+This content is addressable by absolute zone ranges.
 
 ```json
 {
@@ -48,16 +47,13 @@ This section contains the main project configuration.
 
 Run `cargo build --release` to build.
 
----
-
-## SECTION: CodeSnippets
+regedited open
 index: 200
-0x0000000 : 0x0000000 : 0x1000003C : 0x1000004A : 0x0000000 : 0x0000000
+0x0000000 : 0x0000000 : 1x000003B : 1x000004B : 0x0000000 : 0x0000000
 42 | 7 | 3 | 256 | 1024 | 4096 | 100 | 200 | 300
 main.rs core logic
 utility functions
 database connection code
----
 # Code Snippets
 
 ```rust
@@ -73,22 +69,19 @@ import subprocess
 
 # Extract zone 1 content
 result = subprocess.run(
-    ["regedited", "zone-extract", "example.md", "CodeSnippets", "1"],
+    ["regedited", "zone-extract", "example.md", "200", "1"],
     capture_output=True, text=True
 )
 print(result.stdout)
 ```
 
----
-
-## SECTION: DataTable
+regedited open
 index: 300
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
 data summary line
 data notes here
 data reference url
----
 # Data Table
 
 | ID | Name    | Value | Status |
@@ -97,16 +90,13 @@ data reference url
 | 2  | Item B  | 200   | active |
 | 3  | Item C  | 300   | draft  |
 
----
-
-## SECTION: EmptySection
+regedited open
 index: 400
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0
 
 
 
----
-# Empty Section
+# Empty Record Example
 
-This section has empty strings and zero values — useful as a template.
+This record has empty strings and zero values — useful as a template.

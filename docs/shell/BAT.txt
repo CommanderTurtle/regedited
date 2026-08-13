@@ -37,7 +37,7 @@ WRITES
 rgd rs i38s2 --text "updated from cmd.exe"
 rgd rc i38s1 i39s1
 rgd rc i38z1 i39z1 --append
-rgd sz ProjectConfig 0 10 20 --zone-type code
+rgd sz i38 0 10 20 --zone-type code
 
 BOOLEAN AND DIFF
 

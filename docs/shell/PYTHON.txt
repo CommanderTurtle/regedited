@@ -16,13 +16,13 @@ ref-* commands use 1-based slots:
   index:5:zone:1 through index:5:zone:3
   index:5:zonehex:1 through index:5:zonehex:3
 
-Older section commands use 0-based slots:
-  set-str FILE SECTION 0 through 2
-  set-num FILE SECTION 0 through 8
-  clip FILE SECTION 0 through 2
-  clip-db FILE SECTION 0 through 8
-  grep FILE SECTION 0 through 2
-  zone-extract FILE SECTION 0 through 2
+The original positional commands use 0-based slots:
+  set-str FILE INDEX 0 through 2
+  set-num FILE INDEX 0 through 8
+  clip FILE INDEX 0 through 2
+  clip-db FILE INDEX 0 through 8
+  grep FILE INDEX 0 through 2
+  zone-extract FILE INDEX 0 through 2
 
 Python setup:
 
@@ -195,7 +195,7 @@ copy_with_clip_exe(explicit_hex_content)
 # subprocess.run(["wl-copy"], input=zone_value, text=True, check=True)
 # subprocess.run(["xclip", "-selection", "clipboard"], input=zone_value, text=True, check=True)
 
-# Legacy clipboard commands. These use section keys and zero-based slots.
+# Direct clipboard commands. These retain zero-based slots.
 print(run("clip", DOC, "index:38", 0))
 print(run("clip-zone", DOC, "index:38", 0))
 print(run("clip-db", DOC, "index:38", 6))
@@ -290,7 +290,7 @@ print(run("undo", DOC))
 print(run("index-zone-transfer", "--from-file", DOC, "--from-index", 869, "--from-zone", 0, "--to-file", DOC, "--to-index", 38, "--to-zone", 0))
 print(run("undo", DOC))
 
-Legacy section helper commands:
+Direct zero-based index helper commands:
 
 print(run("set-str", DOC, "index:38", 0, "legacy string zero"))
 print(run("set-num", DOC, "index:38", 6, 777))
@@ -301,13 +301,13 @@ print(run("zone-replace", DOC, "index:38", 0, "--text", "legacy zone replacement
 print(run("undo", DOC))
 print(run("zone-append", DOC, "index:38", 0, "--text", "legacy append"))
 print(run("undo", DOC))
-print(run("zone-copy", DOC, "index:869", 0, "index:38", 0))
+print(run("zone-copy", DOC, "--from", "index:869", "--from-zone", 0, "--to", "index:38", "--to-zone", 0))
 print(run("undo", DOC))
 
 Search and old boolean helpers:
 
 print(run("fgrep", DOC, "thirty-eight"))
-print(run("fgrep", DOC, "zone", "--section", "index:38"))
+print(run("fgrep", DOC, "zone", "--index", "index:38"))
 print(run("fgrep-multi", DOC, "thirty-eight", "eight-six-nine"))
 print(run("lines", DOC, 29, 30))
 print(run("bool-and", DOC, "index:38", "multiline", "value"))
@@ -320,12 +320,12 @@ print(run("count", DOC, "__all__", "index"))
 Create/copy/replace documents:
 
 print(run("new", "new-doc.md", "New Regedited Document"))
-print(run("add", "new-doc.md", "LegacyNamedSection"))
-print(run("rm", "new-doc.md", "LegacyNamedSection"))
+print(run("add", "new-doc.md", 900))
+print(run("rm", "new-doc.md", 900))
 Path("donor.md").write_text(DOC.read_text(encoding="utf-8"), encoding="utf-8")
 print(run("diff", DOC, "donor.md"))
 print(run("replace", DOC, "donor.md", "--output", "replaced-output.md"))
-print(run("replace", DOC, "donor.md", "--sections", "index:38", "--output", "replaced-index38.md"))
+print(run("replace", DOC, "donor.md", "--indexes", "index:38", "--output", "replaced-index38.md"))
 
 WAL, transactions, schema:
 

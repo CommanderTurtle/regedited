@@ -44,7 +44,6 @@ index: 64
 Primary summary
 Secondary summary
 One important line
----
 ...ordinary file content continues...
 ```
 
@@ -53,7 +52,7 @@ Index `64` now has:
 - three typed line ranges;
 - nine signed decimal values;
 - three string values;
-- an opaque content region after `---`;
+- absolute pointers into the shared document;
 - one canonical numeric identity, regardless of where the opener lives.
 
 ## Why It Is Fast
@@ -123,25 +122,14 @@ the third and last string                  <---all these can be echoed to consol
 ...
 ```
 
-The canonical section key for those examples is `index:500`, `index:600`, `index:700`, and `index:999`. If you want a human label, store it in one of the three string lines and read it with `index-str-list` or `ref-get index:<N>:string:<1-3>`.
+The canonical index key for those examples is `index:500`, `index:600`, `index:700`, and `index:999`. If you want a human label, store it in one of the three string lines and read it with `index-str-list` or `ref-get index:<N>:string:<1-3>`.
 
 The scanner uses zero-allocation exact byte search for the lowercase phrase `regedited open`. No `to_lowercase()`, no string allocations.
 
-### Compatible: `## SECTION:` Headers (for markdown / other plaintext) — i.e. no different than `regedited open`
-
-```markdown
-## SECTION: CodeSnippets
-index: 200
-0x0000000 : 0x0000000 : 1x000003C : 1x000004A : 0x0000000 : 0x0000000
-42 | 7 | 3 | 256 | 1024 | 4096 | 100 | 200 | 300
-main.rs core logic
-utility functions
-database connection code
----
-fn main() { ... }
-```
-
-`## SECTION:` remains fully supported for older markdown files and hand-authored documents.
+There is no second opener syntax and no implicit content separator. Only the
+exact lowercase substring `regedited open` starts a record. The marker plus
+its following six structured lines is the complete record; all other text in
+the file remains shared and only explicit zones create bounded ranges.
 
 ---
 
@@ -256,8 +244,11 @@ The help tables are generated from the actual Clap command definitions and alias
 
 ```bash
 rgd --help           # categorized syntax table
-rgd --help -e        # same table, advanced examples
-rgd rb -help         # one command in detail
+rgd --help --ex 1    # PowerShell example summary
+rgd rb --help --ex 1 # five detailed PowerShell examples for ref-bool
+rgd rb --help --ex 2 # Bash
+rgd rb --help --ex 3 # Python
+rgd rb --help --ex 4 # CMD
 
 regedited -ex powershell
 regedited -ex script powershell
@@ -273,28 +264,8 @@ i64
 index:64
 ```
 
-Duplicate numeric indexes are rejected, including duplicates hidden behind two different legacy section labels.
-
-<details>
-<summary><strong>Legacy <code>## SECTION:</code> compatibility</strong></summary>
-
-Older files may use a human-readable opener:
-
-```markdown
-## SECTION: CustomerNotes
-index: 64
-0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
-1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
-First string
-Second string
-Third string
----
-Content
-```
-
-`CustomerNotes` remains a compatibility alias, but `64` is canonical. New indexes created with `regedited add` use `regedited open` and do not invent a section name.
-
-</details>
+Duplicate numeric indexes are rejected. Arbitrary characters surrounding the
+marker never become a name; the following `index: N` line is the identity.
 
 ## Document Layout
 
@@ -303,10 +274,12 @@ Content
 | `+0` | Any line containing `regedited open` | Canonical opener; text around the phrase is ignored |
 | `+1` | `index: N` | Numeric identity |
 | `+2` | Six hex-words | Three typed `(start, end)` zone pairs |
-| `+3` | Nine integers | Pipe-separated DB values; legacy tab separators are accepted |
+| `+3` | Nine exact decimals | Pipe-separated DB values; legacy tab separators are accepted |
 | `+4..+6` | Three strings | Summaries, labels, or arbitrary one-line values |
-| `+7` | `---` | Metadata/content separator |
-| `+8..` | Content | Ordinary UTF-8 content until the next index or EOF |
+
+That is the entire record. A `---` line, Markdown heading, or any other text
+has no structural meaning to the index scanner. Zones address absolute line
+ranges anywhere in the shared UTF-8 document.
 
 The trigger is an exact lowercase byte match for `regedited open`. It may appear inside a comment or arbitrary text, but text before and after the phrase is never parsed as a name.
 
@@ -318,7 +291,7 @@ index: 500
 HTML index
 
 
----
+ordinary html continues here
 -->
 ```
 
@@ -423,7 +396,7 @@ rgd rb i64db7 gte 8 --then-val READY --else-val WAIT
 rgd rb i64z1 contains waterfront
 ```
 
-`ref-bool` supports `contains`, `eq`, `ne`, `gt`, `gte`, `lt`, and `lte`. Numeric comparisons parse both sides as `f64`; malformed numeric input is an error, not a false result.
+`ref-bool` supports `contains`, `eq`, `ne`, `gt`, `gte`, `lt`, and `lte`. Numeric comparisons use the same exact fixed-point decimal representation as DB values; malformed numeric input is an error, not a false result.
 
 <details>
 <summary><strong>Reference write behavior</strong></summary>
@@ -475,7 +448,7 @@ The executable is the authoritative command reference:
 
 ```bash
 rgd --help
-rgd --help -e
+rgd --help --ex 1
 <command> -help
 ```
 
@@ -490,7 +463,7 @@ rgd --help -e
 | `scan` | `s` | Scan and filter index metadata |
 | `resolve-index` | `ri` | Resolve a numeric index to its internal layout key |
 | `index-str-list` | `ist` | Print all three string values |
-| `content` | `co` | Print content after the index separator |
+| `content` | `co` | Validate an index, then print the shared document |
 | `new`, `add`, `rm` | `n`, `a`, `rm` | Create a file, add a numeric index, or remove one |
 | `summary`, `info` | `sm`, `i` | Print document-level information |
 
@@ -614,9 +587,9 @@ flowchart LR
     File["UTF-8 text file"] --> Trigger["regedited open"]
     Trigger --> Index["numeric index"]
     Index --> Hex["3 typed zone pairs"]
-    Index --> DB["9 integer values"]
+    Index --> DB["9 exact decimal values"]
     Index --> Strings["3 string values"]
-    Index --> Content["opaque content"]
+    Hex --> Content["absolute ranges in shared document"]
 
     Hex --> Refs["native references"]
     DB --> Refs
@@ -629,7 +602,9 @@ flowchart LR
     CLI --> Safety["undo / WAL / checkpoint"]
 ```
 
-The scanner keeps an internal layout key because legacy headers still exist, but all current CLI identity and replacement logic joins records by numeric index. Numeric references resolve before legacy names.
+The scanner keeps an internal layout key for deterministic record ordering and
+diagnostics. All CLI identity and replacement logic joins valid records by the
+numeric value on their `index: N` line.
 
 <details>
 <summary><strong>Source map</strong></summary>
