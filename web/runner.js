@@ -59,6 +59,10 @@ export class RegeditedRunner {
     return this.readIndex(index).db;
   }
 
+  dbExact(index) {
+    return this.readIndex(index).dbExact;
+  }
+
   indexStrList(index) {
     return this.readIndex(index).strings;
   }
@@ -122,6 +126,8 @@ export class RegeditedRunner {
         return this.indexStrList(args[0]);
       case "db":
         return this.db(args[0]);
+      case "db-exact":
+        return this.dbExact(args[0]);
       case "hexline":
         return this.hexline(args[0]);
       case "content":

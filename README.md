@@ -571,6 +571,7 @@ const rgd = await createRegeditedRunner(source);
 
 console.log(rgd.list());
 console.log(rgd.readIndex(64));
+console.log(rgd.dbExact(64)); // exact decimal strings, without JS Number rounding
 console.log(rgd.refGet("i64s2"));
 console.log(rgd.grep("waterfront", "i64"));
 console.log(rgd.convert([85, 95], "code"));

@@ -27,6 +27,7 @@ rgd.fgrep("waterfront");
 rgd.fgrep("waterfront", "index:38");
 rgd.readIndex(38);
 rgd.db(38);
+rgd.dbExact(38);
 rgd.indexStrList(38);
 rgd.hexline(38);
 rgd.content(38);
@@ -47,6 +48,7 @@ rgd.run("ri", 38);
 rgd.run("index-str-list", 38);
 rgd.run("ist", 38);
 rgd.run("db", 38);
+rgd.run("db-exact", 38);
 rgd.run("hexline", 38);
 rgd.run("hl", 38);
 rgd.run("content", 38);
@@ -137,7 +139,10 @@ Registry scans the raw string once and reuses its canonical index map. Grep is
 the same case-insensitive line matcher used by native fast_grep. Scoped grep
 validates the selected numeric index, then searches the shared document, matching the native index-qualified
 operation. read_index returns its hexword line, nine DB values, three strings,
-content, and line bounds as JSON.
+content, and line bounds as JSON. The dbExact field, and the runner's
+dbExact(index) method, return the same nine decimal literals as strings. Use
+that exact form when values can exceed JavaScript Number precision; db remains
+available as numbers for existing browser callers.
 
 The stateless equivalents are also exported:
 

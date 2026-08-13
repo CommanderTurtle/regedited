@@ -148,6 +148,7 @@ fn index_json(content: &str, document: &DocumentHeader, index: u64) -> Result<St
     };
     let db = regedited::db_line::parse_numeric_line(line(section.numeric_line, "numeric")?)
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let db_exact: Vec<&str> = db.iter().map(|value| value.as_str()).collect();
     let content = regedited::header::extract_section_content(content, section)
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
 
@@ -156,6 +157,7 @@ fn index_json(content: &str, document: &DocumentHeader, index: u64) -> Result<St
         "key": key,
         "hexLine": line(section.ascii_line, "hexword")?,
         "db": db,
+        "dbExact": db_exact,
         "strings": [
             line(section.string1_line, "string 1")?,
             line(section.string2_line, "string 2")?,
