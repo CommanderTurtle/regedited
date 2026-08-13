@@ -165,7 +165,7 @@ enum Commands {
         /// Source file (donor indexes)
         source: PathBuf,
         /// Index references to replace (all matching if omitted)
-        #[arg(short, long = "indexes", visible_alias = "sections")]
+        #[arg(short, long = "indexes", visible_alias = "sections", num_args = 1..)]
         sections: Option<Vec<String>>,
         /// Output file (default: overwrite target)
         #[arg(short, long)]
@@ -911,7 +911,7 @@ enum Commands {
         #[arg(short, long, default_value = "5000")]
         port: u16,
         /// Read-only mode (disallow modifications)
-        #[arg(long, default_value = "true")]
+        #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
         read_only: bool,
     },
 }
@@ -1078,20 +1078,19 @@ fn parse_cli(args: Vec<OsString>, short_mode: bool) -> Cli {
         return Cli::try_parse_from(args).unwrap_or_else(|error| error.exit());
     }
 
-    let explicit_file = regedited::qol::has_explicit_file(&args, command);
     let original = Cli::try_parse_from(args.clone());
+    let explicit_file = regedited::qol::has_explicit_file(&args, command);
+    if explicit_file {
+        if let Ok(cli) = original {
+            return cli;
+        }
+    }
     let loaded = regedited::qol::read_loaded_path()
         .unwrap_or_else(|error| clap::Error::raw(ErrorKind::Io, error.to_string()).exit());
 
     if let Some(loaded) = loaded {
-        let force_loaded_first =
-            original.is_err() && matches!(command, "diff" | "replace" | "state-compare");
-        if !explicit_file || force_loaded_first {
-            if let Some(with_file) =
-                regedited::qol::inject_loaded_file(&args, command, &loaded, force_loaded_first)
-            {
-                return Cli::try_parse_from(with_file).unwrap_or_else(|error| error.exit());
-            }
+        if let Some(with_file) = regedited::qol::inject_loaded_file(&args, command, &loaded, true) {
+            return Cli::try_parse_from(with_file).unwrap_or_else(|error| error.exit());
         }
     } else if !explicit_file {
         clap::Error::raw(ErrorKind::MissingRequiredArgument, NO_LOADED_PATH).exit();
@@ -1130,12 +1129,9 @@ impl HelpShell {
 }
 
 fn requested_help_shell(args: &[OsString]) -> Option<HelpShell> {
-    let position = args.iter().position(|value| {
-        matches!(
-            value.to_str(),
-            Some("--ex" | "-ex" | "--examples" | "-e")
-        )
-    })?;
+    let position = args
+        .iter()
+        .position(|value| matches!(value.to_str(), Some("--ex" | "-ex" | "--examples" | "-e")))?;
     let selector = args
         .get(position + 1)
         .and_then(|value| value.to_str())
@@ -1778,8 +1774,8 @@ fn command_examples(command: &str) -> Vec<CommandExample> {
             ("Encode line number 128640", "rgd gu 128640"),
             ("Encode ASCII A", "rgd gu 65"),
             ("Encode a BMP value", "rgd gu 9731"),
-            ("Decode UTF-16LE hex", "rgd gu 0 --decode 4100"),
-            ("Decode a surrogate pair", "rgd gu 0 --decode 3DD800DE"),
+            ("Decode UTF-16LE hex", "rgd gu 0 --decode \"41 00\""),
+            ("Decode a surrogate pair", "rgd gu 0 --decode \"3D D8 00 DE\""),
         ],
         "set-num" => examples![
             ("Write an integer", "rgd sn i90 0 42"),
@@ -1869,8 +1865,8 @@ fn command_examples(command: &str) -> Vec<CommandExample> {
             ("Use store encapsulation", "rgd en \"value\" --mode d"),
             ("Use search encapsulation", "rgd en \"value\" --mode b"),
             ("Use delimiter encapsulation", "rgd en \"value\" --mode c"),
-            ("Extract an encapsulated value", "rgd en \"[\\\"value\\\"]\" --extract"),
-            ("Convert encapsulation mode", "rgd en \"[\\\"value\\\"]\" --to d"),
+            ("Extract an encapsulated value", "ENCAP_EXTRACT"),
+            ("Convert encapsulation mode", "ENCAP_TO_D"),
         ],
         "grab-html" => examples![
             ("Extract numbered links", "rgd gh page.html href --tag a --numbered"),
@@ -1952,7 +1948,7 @@ fn command_examples(command: &str) -> Vec<CommandExample> {
         "reg-types" => examples![
             ("List supported typed values", "rgd rt"),
             ("List before parsing a DWORD", "rgd rt && rgd rp 42 --reg-type REG_DWORD"),
-            ("List before parsing JSON", "rgd rt && rgd rp \"{\\\"ok\\\":true}\" --reg-type REG_JSON"),
+            ("List before parsing JSON", "REG_TYPES_JSON"),
             ("List before parsing Boolean", "rgd rt && rgd rp true --reg-type REG_BOOL"),
             ("List with verbose output", "rgd rt --verbose"),
         ],
@@ -1960,7 +1956,7 @@ fn command_examples(command: &str) -> Vec<CommandExample> {
             ("Parse a DWORD", "rgd rp 42 --reg-type REG_DWORD"),
             ("Parse a QWORD", "rgd rp 4294967296 --reg-type REG_QWORD"),
             ("Parse a Boolean", "rgd rp true --reg-type REG_BOOL"),
-            ("Parse JSON", "rgd rp \"{\\\"ok\\\":true}\" --reg-type REG_JSON"),
+            ("Parse JSON", "REG_JSON"),
             ("Parse a regular string", "rgd rp \"hello world\" --reg-type REG_SZ"),
         ],
         "clip-zone" => examples![
@@ -2026,13 +2022,82 @@ fn render_command_example(raw: &str, shell: HelpShell) -> String {
     }
     if raw == "CHECKPOINT" {
         return match shell {
-            HelpShell::PowerShell => "rgd ck; if ($LASTEXITCODE -eq 0) { rgd cm --pull; if ($LASTEXITCODE -eq 0) { rgd pl } }".to_string(),
-            HelpShell::Bash => "rgd ck && rgd cm --pull && rgd pl".to_string(),
-            HelpShell::Python => "import subprocess; subprocess.run('rgd ck && rgd cm --pull && rgd pl', shell=True, check=True)".to_string(),
-            HelpShell::Cmd => "rgd ck && rgd cm --pull && rgd pl".to_string(),
+            HelpShell::PowerShell => "rgd ck; if ($LASTEXITCODE -eq 0) { rgd pl; if ($LASTEXITCODE -eq 0) { rgd cm } }".to_string(),
+            HelpShell::Bash => "rgd ck && rgd pl && rgd cm".to_string(),
+            HelpShell::Python => "import subprocess; subprocess.run('rgd ck && rgd pl && rgd cm', shell=True, check=True)".to_string(),
+            HelpShell::Cmd => "rgd ck && rgd pl && rgd cm".to_string(),
         };
     }
-    if let Some((input, command)) = raw.strip_prefix("PIPE:").and_then(|value| value.split_once("|||")) {
+    if matches!(
+        raw,
+        "ENCAP_EXTRACT" | "ENCAP_TO_D" | "REG_JSON" | "REG_TYPES_JSON"
+    ) {
+        let (program, arguments): (&str, &[&str]) = match raw {
+            "ENCAP_EXTRACT" => ("rgd", &["en", "[\"value\"]", "--extract"]),
+            "ENCAP_TO_D" => ("rgd", &["en", "[\"value\"]", "--to", "d"]),
+            "REG_JSON" => ("rgd", &["rp", "{\"ok\":true}", "--reg-type", "REG_JSON"]),
+            "REG_TYPES_JSON" => (
+                "rgd",
+                &[
+                    "rt",
+                    "&&",
+                    "rgd",
+                    "rp",
+                    "{\"ok\":true}",
+                    "--reg-type",
+                    "REG_JSON",
+                ],
+            ),
+            _ => unreachable!(),
+        };
+        return match shell {
+            HelpShell::PowerShell | HelpShell::Bash => {
+                let quoted = arguments
+                    .iter()
+                    .map(|argument| {
+                        if argument.contains('[') || argument.contains('{') {
+                            format!("'{}'", argument)
+                        } else {
+                            (*argument).to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("{} {}", program, quoted)
+            }
+            HelpShell::Python => {
+                if raw == "REG_TYPES_JSON" {
+                    "import subprocess; subprocess.run(['rgd','rt'], check=True); subprocess.run(['rgd','rp','{\"ok\":true}','--reg-type','REG_JSON'], check=True)".to_string()
+                } else {
+                    format!(
+                        "import subprocess; subprocess.run({:?}, check=True)",
+                        std::iter::once(program)
+                            .chain(arguments.iter().copied())
+                            .collect::<Vec<_>>()
+                    )
+                }
+            }
+            HelpShell::Cmd => {
+                let quoted = arguments
+                    .iter()
+                    .map(|argument| {
+                        let value = argument.replace('"', "\\\"");
+                        if value.contains('[') || value.contains('{') {
+                            format!("\"{}\"", value)
+                        } else {
+                            value
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("{} {}", program, quoted)
+            }
+        };
+    }
+    if let Some((input, command)) = raw
+        .strip_prefix("PIPE:")
+        .and_then(|value| value.split_once("|||"))
+    {
         return match shell {
             HelpShell::PowerShell => format!("'{}' | {}", input.replace('\'', "''"), command),
             HelpShell::Bash => format!("printf '%s\\n' '{}' | {}", input.replace('\'', "'\\''"), command),
@@ -2095,10 +2160,7 @@ fn print_command_help(command_name: &str, short_mode: bool, example_shell: Optio
     if let Some(shell) = example_shell {
         print_command_examples(command_name, short, shell);
     } else {
-        println!(
-            "Examples: rgd {} --help --ex [1|2|3|4]",
-            short
-        );
+        println!("Examples: rgd {} --help --ex [1|2|3|4]", short);
     }
 }
 
@@ -2656,10 +2718,7 @@ fn cmd_convert(values: &[String], zone_type: &str) -> Result<(), Box<dyn std::er
 }
 
 fn cmd_types() -> Result<(), Box<dyn std::error::Error>> {
-    println!(
-        "{}",
-        "Zone Types (first character before x)".green().bold()
-    );
+    println!("{}", "Zone Types (first character before x)".green().bold());
     println!();
     for zt in regedited::zone_type::ZoneType::ALL {
         println!(
@@ -3797,7 +3856,11 @@ fn parse_decimal_value(
         .into());
     }
     DecimalValue::parse(trimmed).map_err(|error| {
-        format!("{} must be one exact decimal, got '{}': {}", context, trimmed, error).into()
+        format!(
+            "{} must be one exact decimal, got '{}': {}",
+            context, trimmed, error
+        )
+        .into()
     })
 }
 
@@ -4140,10 +4203,18 @@ fn cmd_ref_bool(
         },
         "gt" | ">" | "gte" | ">=" | "lt" | "<" | "lte" | "<=" => {
             let left_num = DecimalValue::parse(left_value.trim()).map_err(|error| {
-                format!("Left value '{}' is not numeric: {}", left_value.trim(), error)
+                format!(
+                    "Left value '{}' is not numeric: {}",
+                    left_value.trim(),
+                    error
+                )
             })?;
             let right_num = DecimalValue::parse(right_value.trim()).map_err(|error| {
-                format!("Right value '{}' is not numeric: {}", right_value.trim(), error)
+                format!(
+                    "Right value '{}' is not numeric: {}",
+                    right_value.trim(),
+                    error
+                )
             })?;
             match op_normalized.as_str() {
                 "gt" | ">" => left_num > right_num,
