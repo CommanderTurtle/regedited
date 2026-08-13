@@ -1,13 +1,34 @@
 # Regedited Changelog
 
-# 2026-08-13 - Canonical Records, Exact References & Exhaustive Examples
+---
+
+# 2026-08-13 - Parsing Bugfixes & Example Improvements
+
+- `rgd <command> --help --ex` now supports `--ex <1/2/3/4>` pertaining to `pwsh`,`bash`,`python`,`cmd` for all subcommands.
+
+- Bug fixes to decimal values
+
+- Hardening of examples
+
+Basically my edits over a month of using regedited in the real world. Adjusted for many things centered around QoL for parsing.
+
+Tip - Easy commands to get started:
+
+- `rgd rg <i#s# or i#z#>` (ripgrep for indices)
+- `rgd ist <index number>` (String Summary)
+- `rgd convert 58 72 | Set-Clipboard` (Example finding hexword for later. Append to index manually. Lines 57-71.
+- `rgd <commit/check/pull>` (Example using like git when things scoot downwards after editing)
+
+---
+
+## Testing/Advanced Info:
 
 This pass consolidates the parsing and QoL adjustments discovered through a
 month of using Regedited against real files. It makes the six-line index record
 the sole structural contract, preserves decimal data exactly, and turns every
 command's help examples into executable shell-specific documentation.
 
-### Canonical Format and Parsing
+### Format and Parsing
 
 - A record begins when a line contains the exact lowercase marker phrase
   `regedited open`. The marker may have arbitrary text before or after it.
@@ -65,10 +86,10 @@ command's help examples into executable shell-specific documentation.
   chaining, CMD CRLF gates, Python subprocess rendering, and stateful examples.
 - Preserved the canonical `iN` display form in list and integration output.
 
-### Quick Start
+### Quick ways to get started
 
 ```powershell
-# Read exact native references. This is reference retrieval, not ripgrep.
+# Reference for retrieval
 rgd rg i38s1
 rgd rg i38z1
 rgd rg i38
@@ -116,6 +137,8 @@ For actual text search, use `rgd f` / `fgrep`, `rgd fm` / `fgrep-multi`, or
 - Live HTTP exact-string, whole-index, aggregate-ref, and invalid-scope checks:
   passed
 - Optimized Wasm package via `scripts/webbuild.ps1`: passed
+
+---
 
 # 2026-07-20 - QoL Update Part 3
 
