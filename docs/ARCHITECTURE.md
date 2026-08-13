@@ -148,13 +148,14 @@ Ref string → parse_ref_spec() → RefSpec enum
                                   ↓
                           read_ref_value()
                                   ↓
-        index lookup / DB slot / string slot / zone range / hex range
+     whole-index aggregate / DB slot / string slot / zone range / hex range
                                   ↓
           ref-get | ref-set | ref-copy | ref-diff | ref-bool
 ```
 
 Native refs are the command router for database-like behavior. They let one resolver handle all addressable storage shapes:
 
+- Whole-index aggregates: `index:3` (read-only)
 - Index strings: `index:3:string:2`
 - Numeric DB cells: `index:3:db:8`
 - Full DB lines: `index:3:dbline`
@@ -170,18 +171,23 @@ Writes pass through `write_file_with_undo()` for a one-step `.undo` copy, then u
 flowchart LR
     Spec["native ref spec"] --> Parse["parse_ref_spec"]
     Parse --> Kind{"RefSpec kind"}
+    Kind --> Whole["whole-index aggregate"]
     Kind --> Str["index string slot"]
     Kind --> Db["index DB slot / DB line"]
     Kind --> Zone["defined zone content"]
     Kind --> Hex["literal hex line/range"]
     Kind --> Lit["literal text"]
+    Whole --> Read["get / copy source / diff / bool"]
+    Lit --> Read
     Str --> Ops["get / set / copy / diff / bool"]
     Db --> Ops
     Zone --> Ops
     Hex --> Ops
-    Lit --> Ops
-    Ops --> Undo[".undo safety copy on writes"]
-    Ops --> Shift["line-delta hex-word recalculation"]
+    Read --> Result["resolved exact content"]
+    Ops --> Result
+    Ops --> Write{"write operation?"}
+    Write --> Undo[".undo safety copy"]
+    Write --> Shift["line-delta hex-word recalculation"]
 ```
 
 ### Zone Content Manipulation
@@ -270,7 +276,9 @@ pub struct DbLine {
 }
 ```
 
-Simple fixed-size arrays. Parsed via `split('\t')` — no complex parsing needed.
+Simple fixed-size arrays. The canonical DB line uses ` | ` separators; tab
+separation remains accepted for legacy files. Each value is parsed as an exact
+fixed-point decimal rather than a floating-point number.
 
 ---
 
@@ -659,10 +667,18 @@ flowchart LR
     Serve --> Scan["cached file content + header"]
     Scan --> State["/state"]
     Scan --> Ref["/ref"]
-    Scan --> Bool["/ref-bool and /query"]
+    Scan --> RefBool["/ref-bool"]
+    Scan --> Query["/query"]
     Ref --> Spec["native ref resolver"]
-    Bool --> Spec
+    RefBool --> Spec
+    Query --> Scope["exact Boolean scope resolver"]
+    Scope --> Child["string / DB / DB line / hex / zone"]
+    Scope --> Whole["whole-index aggregate"]
+    Scope --> All["explicit __all__"]
     Spec --> File["single markdown / registry file"]
+    Child --> File
+    Whole --> File
+    All --> File
 ```
 
 ---
@@ -968,7 +984,7 @@ regedited serve --file config.regd --port 5000
 | GET | `/types` | Zone types |
 | GET | `/wal` | WAL status |
 | GET | `/health` | Health check |
-| POST | `/query` | Boolean query JSON |
+| POST | `/query` | Exact-scope Boolean query JSON |
 
 ```bash
 curl http://localhost:5000/sections
@@ -982,10 +998,11 @@ curl "http://localhost:5000/ref-bool?left=index:3:db:8&op=gte&right=10"
 
 ## Testing
 
-```
-tests: 168 unit tests + doctests
-coverage: core modules fully tested
-integration: CLI commands tested via example.md
+```text
+unit: 196 passed, 1 ignored million-line stress test
+integration: 5 passed across the CLI integration suites
+doctests: 8 passed, 3 platform/clipboard examples ignored
+shell examples: 2,840 passed across PowerShell, Bash, Python, and CMD
 ```
 
 Run tests:

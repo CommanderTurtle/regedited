@@ -1,5 +1,122 @@
 # Regedited Changelog
 
+# 2026-08-13 - Canonical Records, Exact References & Exhaustive Examples
+
+This pass consolidates the parsing and QoL adjustments discovered through a
+month of using Regedited against real files. It makes the six-line index record
+the sole structural contract, preserves decimal data exactly, and turns every
+command's help examples into executable shell-specific documentation.
+
+### Canonical Format and Parsing
+
+- A record begins when a line contains the exact lowercase marker phrase
+  `regedited open`. The marker may have arbitrary text before or after it.
+- Exactly six lines after the marker define the complete record: `index: N`,
+  one six-word hex line, one nine-value DB line, and three string lines.
+- Removed the former implied divider, Markdown-section, and record-body
+  semantics. Zones remain absolute line ranges in the shared document.
+- Replaced integer-only DB parsing with exact fixed-point `DecimalValue`
+  handling. Signed decimals, arbitrarily long fractional values, and integers
+  beyond JavaScript's safe-number range retain their original literals.
+- Browser/Wasm callers can use `dbExact(index)` / `db-exact` for exact decimal
+  strings while the existing numeric `db(index)` interface remains available.
+- Corrected line-range fixtures and assertions to match physical zero-based,
+  inclusive zone coordinates.
+
+### Native References and Boolean Scopes
+
+- `iN` / `index:N` now dereferences to a read-only whole-index aggregate:
+  identity, hex line, DB line, all three strings, and every defined zone.
+- Content Boolean commands now operate on the exact selected scope:
+  - `iNsM` — one string
+  - `iNdbM` — one DB value
+  - `iNdbl` — the complete DB line
+  - `iNhl` — the complete hex line
+  - `iNzM` — one defined zone
+  - `iN` — the whole-index aggregate
+  - `__all__` — the complete file, explicitly
+- `bool-and`, `bool-nand`, `bool-or`, `bool-xor`, `count`, and `if-contains`
+  no longer validate an index and then silently widen the search to the whole
+  file. Invalid or ambiguous scope strings are rejected.
+- Native HTTP `/query` uses the same exact-scope rules, and `/ref?spec=index:N`
+  exposes the same whole-index aggregate as the CLI.
+
+### Help and Examples
+
+- Every command accepts eight command-local example selectors:
+  - `--ex 1` / `2` / `3` / `4`: standard PowerShell, Bash, Python, and CMD
+  - `--ex 5` / `6` / `7` / `8`: advanced counterparts in the same order
+- Every canonical command and `rgd` alias has five runnable examples per
+  selector. Stateful examples establish their own checkpoint, transaction, or
+  source document rather than relying on hidden tutorial state.
+- Advanced examples combine exact Boolean gates, cross-index decimal
+  comparisons, zone diffs, conversions, and `commit` / `check` / `pull`
+  lifecycles into deliberately dense one-liners.
+- All 2,840 rendered examples were executed in their real shell interpreters:
+  71 command surfaces × 5 examples × 8 selectors.
+
+### Fixed and Hardened
+
+- Removed the unused `fast_replace_str` implementation and restored a clean
+  warning-free native build.
+- Kept canonical and compact command spellings aligned across CLI help,
+  shell references, HTTP behavior, and browser documentation.
+- Hardened quoted phrases, negative decimal arguments, PowerShell statement
+  chaining, CMD CRLF gates, Python subprocess rendering, and stateful examples.
+- Preserved the canonical `iN` display form in list and integration output.
+
+### Quick Start
+
+```powershell
+# Read exact native references. This is reference retrieval, not ripgrep.
+rgd rg i38s1
+rgd rg i38z1
+rgd rg i38
+
+# Show the three-string summary for one numeric index.
+rgd ist 38
+
+# Convert zero-based inclusive physical lines 58-72 to markdown hex-words.
+rgd cv 58 72 | Set-Clipboard
+
+# The built-in clipboard suffix is equivalent.
+rgd cv 58 72 c
+
+# Checkpoint, inspect external line movement, and apply safe relocations.
+rgd cm
+rgd ck
+rgd pl
+
+# Standard and advanced PowerShell examples for one command.
+rgd rb --help --ex 1
+rgd rb --help --ex 5
+```
+
+For actual text search, use `rgd f` / `fgrep`, `rgd fm` / `fgrep-multi`, or
+`rgd g` / `grep` rather than `rgd rg`, which means `ref-get`.
+
+### Included Commits
+
+- `7314817` — Canonicalize Regedited index records and command behavior
+- `a17c25c` — Document every Regedited command across interactive shells
+- `2991d55` — Fix canonical record build and range assertions
+- `36a2960` — Validate command examples across interactive shells
+- `55286f8` — Preserve exact decimals in browser bindings
+- `e861058` — Scope boolean operations and add advanced help lanes
+- `7e1946e` — Document exact boolean scopes and advanced examples
+
+### Validation
+
+- `cargo check`: passed without warnings
+- `cargo test --release`: passed, including CLI and exact-scope integration
+  tests plus doctests
+- `cargo build --release`: passed
+- PowerShell, Bash, Python, and CMD standard examples: 1,420 / 1,420 passed
+- PowerShell, Bash, Python, and CMD advanced examples: 1,420 / 1,420 passed
+- Live HTTP exact-string, whole-index, aggregate-ref, and invalid-scope checks:
+  passed
+- Optimized Wasm package via `scripts/webbuild.ps1`: passed
+
 # 2026-07-20 - QoL Update Part 3
 
 - Added diffing through the `commit` command. Set a whole file of registry indices, with maintained hexwords (1,2,3) and instantly reload after line numbers change rather than relying on the previous method of accomplishing this only via served instances.
