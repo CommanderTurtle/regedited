@@ -95,6 +95,7 @@ Basic enumeration and inspection:
 
 Ref grammar accepted by ref-get, ref-set, ref-copy, ref-diff, and ref-bool:
 
+index:38                 read-only whole-index aggregate
 index:38:string:1
 index:38:str:1
 index:38:db:7
@@ -265,7 +266,8 @@ Direct zero-based index helper commands:
 "$REG" zone-copy "$DOC" --from "index:869" --from-zone 0 --to "index:38" --to-zone 0
 "$REG" undo "$DOC"
 
-Search and old boolean helpers:
+Search and exact-scope boolean helpers (a Boolean scope may be any ref above,
+the whole-index aggregate, or __all__):
 
 "$REG" fgrep "$DOC" "thirty-eight"
 "$REG" fgrep "$DOC" "zone" --index "index:38"
@@ -276,6 +278,9 @@ Search and old boolean helpers:
 "$REG" bool-xor "$DOC" "index:38" "multiline" "eight-six-nine"
 "$REG" bool-nand "$DOC" "index:38" "multiline" "forbidden"
 "$REG" if-contains "$DOC" "index:38" "multiline" --then-val yes --else-val no
+"$REG" bool-and "$DOC" "index:38:string:1" "thirty-eight" "value"
+"$REG" bool-xor "$DOC" "index:38:zone:1" "multiline" "forbidden"
+"$REG" if-contains "$DOC" "index:38:db:7" "777" --then-val yes --else-val no
 "$REG" count "$DOC" "__all__" "index"
 
 Create/copy/replace documents:

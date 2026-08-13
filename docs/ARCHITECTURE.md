@@ -32,7 +32,7 @@ Regedited treats a plaintext markdown file like a **memory-mapped key-value stor
 3. **Builds an index** — a `BTreeMap<String, SectionInfo>` gives O(log n) record lookups
 4. **Resolves explicit content** — hex-word pairs select absolute shared-document line ranges
 5. **Patches with line deltas** — content-aware zone manipulation recalculates only affected hex-words
-6. **Resolves native refs** — `index:N:string:M`, `index:N:zone:M`, and `hex:A..B` specs address data without a SQL schema
+6. **Resolves native refs** — `index:N` aggregates one complete index while `index:N:string:M`, `index:N:zone:M`, and `hex:A..B` address exact children without a SQL schema
 
 The source file itself remains OS-managed through a memory map during read-only
 scan operations. Rust-owned memory scales primarily with discovered index
@@ -362,6 +362,7 @@ Native refs are typed addresses for values inside the plaintext file. They keep 
 
 | Spec | Reads/Writes |
 |------|--------------|
+| `index:<n>` | Read-only whole-index aggregate: identity, hex line, DB line, strings, and defined zones |
 | `index:<n>:string:<1-3>` | One of the three string slots |
 | `index:<n>:db:<1-9>` | One numeric DB value |
 | `index:<n>:dbline` | The complete 9-value DB line |
@@ -508,14 +509,18 @@ The 28-bit line number limit (268,435,455 lines) supports files up to roughly 50
 
 ### Boolean Operations
 
+`<scope>` is `__all__`, a whole index (`index:<n>` / `i<n>`), or an exact
+child ref such as `i<n>s<m>`, `i<n>db<m>`, `i<n>dbl`, `i<n>hl`, or
+`i<n>z<m>`. Boolean commands never widen a child ref to the shared file.
+
 | Command | Args | Exit 0 when |
 |---------|------|-------------|
-| `bool-and` | `<file> <S> <p1> [p2]...` | ALL patterns found |
-| `bool-nand` | `<file> <S> <must> <mustnot>` | Contains must, NOT mustnot |
-| `bool-or` | `<file> <S> <p1> [p2]...` | ANY pattern found |
-| `bool-xor` | `<file> <S> <a> <b>` | Exactly ONE found |
-| `count` | `<file> <S> <pattern>` | Always 0 (shows count) |
-| `if-contains` | `<file> <S> <p> [--then <v>] [--else <v>]` | Always 0 (prints value) |
+| `bool-and` | `<file> <scope> <p1> [p2]...` | ALL patterns found in that scope |
+| `bool-nand` | `<file> <scope> <must> <mustnot>` | Scope contains must, NOT mustnot |
+| `bool-or` | `<file> <scope> <p1> [p2]...` | ANY pattern found in that scope |
+| `bool-xor` | `<file> <scope> <a> <b>` | Exactly ONE found in that scope |
+| `count` | `<file> <scope> <pattern>` | Always 0 (shows scoped count) |
+| `if-contains` | `<file> <scope> <p> [--then <v>] [--else <v>]` | Always 0 (prints value) |
 
 ### Native Ref Operations
 
@@ -632,7 +637,7 @@ Serve mode is intentionally thin. It exposes the same native scan/ref/bool logic
 | GET | `/types` | Zone types |
 | GET | `/wal` | WAL status |
 | GET | `/health` | Health check |
-| POST | `/query` | Boolean query JSON |
+| POST | `/query` | Exact-scope Boolean query JSON |
 
 Examples:
 
@@ -645,7 +650,7 @@ curl "http://localhost:5000/ref-bool?left=index:3:zone:1&op=contains&right=water
 
 curl -X POST http://localhost:5000/query \
   -H "Content-Type: application/json" \
-  -d '{"left":"index:3:db:8","op":"gte","right":"10"}'
+  -d '{"section":"index:3:zone:1","operation":"and","patterns":["waterfront","approved"]}'
 ```
 
 ```mermaid
@@ -729,7 +734,7 @@ subprocess.run([
 ```python
 # Exit code 0 = TRUE, 1 = FALSE
 result = subprocess.run(
-    [REGEDITED, "bool-and", "doc.md", "i200", "fn", "rust"],
+    [REGEDITED, "bool-and", "doc.md", "i200z1", "fn", "rust"],
     capture_output=True, text=True
 )
 if result.returncode == 0:

@@ -249,6 +249,10 @@ rgd rb --help --ex 1 # five detailed PowerShell examples for ref-bool
 rgd rb --help --ex 2 # Bash
 rgd rb --help --ex 3 # Python
 rgd rb --help --ex 4 # CMD
+rgd rb --help --ex 5 # advanced PowerShell one-liners
+rgd rb --help --ex 6 # advanced Bash one-liners
+rgd rb --help --ex 7 # advanced Python one-liners
+rgd rb --help --ex 8 # advanced CMD one-liners
 
 regedited -ex powershell
 regedited -ex script powershell
@@ -371,6 +375,7 @@ References give one grammar to strings, DB values, full metadata lines, defined 
 
 | Canonical reference | `rgd` compact form | Resolves to |
 |---|---|---|
+| `index:64` | `i64` | Whole-index aggregate: identity, hex line, DB line, strings, and defined zones |
 | `index:64:string:2` | `i64s2` | String 2 |
 | `index:64:db:7` | `i64db7` | DB value 7 |
 | `index:64:dbline` | `i64dbl` | All nine DB values |
@@ -394,6 +399,12 @@ rgd rc i64s1 i70s2 --append
 rgd rd i64db1 i70db2
 rgd rb i64db7 gte 8 --then-val READY --else-val WAIT
 rgd rb i64z1 contains waterfront
+
+# Content booleans accept the same exact scopes
+rgd ba i64s2 "follow up" Friday
+rgd bx i64z1 approved rejected
+rgd if i64dbl 1.25 --then-val FOUND --else-val MISSING
+rgd ba __all__ "global phrase" archived
 ```
 
 `ref-bool` supports `contains`, `eq`, `ne`, `gt`, `gte`, `lt`, and `lte`. Numeric comparisons use the same exact fixed-point decimal representation as DB values; malformed numeric input is an error, not a false result.
@@ -448,7 +459,7 @@ The executable is the authoritative command reference:
 
 ```bash
 rgd --help
-rgd --help --ex 1
+rgd --help --ex 1 # selectors 1-4 are standard; 5-8 are advanced
 <command> -help
 ```
 
@@ -480,7 +491,7 @@ rgd --help --ex 1
 | Numeric index zones | `index-zone-extract`, `index-zone-replace`, `index-zone-copy`, `index-zone-transfer`, `index-zone-set-hex`, `index-zone-set-lines` |
 | Literal ranges | `hex-extract`, `hex-replace`, `lines`, `convert`, `types` |
 | Search | `fgrep`, `fgrep-multi`, `grep` |
-| Boolean content | `bool-and`, `bool-nand`, `bool-or`, `bool-xor`, `count`, `if-contains` |
+| Boolean content | `bool-and`, `bool-nand`, `bool-or`, `bool-xor`, `count`, `if-contains` over exact refs, whole-index aggregates, or `__all__` |
 | Clipboard / output | `clip`, `echo`, `echo-direct`, `clip-zone`, `clip-db`, `clip-dbline`, `clip-hexline`, `clip-hexword` |
 
 `fgrep --index i64` is canonical. The old `--section` spelling remains a visible compatibility alias.
@@ -644,9 +655,9 @@ The CLI integration tests create a real `rgd` hard link and exercise loaded path
 Regedited is deliberately small and explicit:
 
 - Input must be valid UTF-8.
-- An index has exactly three zone pairs, nine signed integer values, and three string lines.
+- An index has exactly three zone pairs, nine exact signed decimal values, and three string lines.
 - Zone pointers are physical zero-based line numbers, not AST nodes.
-- The canonical opener is the exact lowercase phrase `regedited open`.
+- An opener is any line containing the exact lowercase marker phrase `regedited open`; the following six lines are the complete record.
 - `rgd load` stores local convenience state; canonical `regedited` does not.
 - The browser package is read-only.
 - The native HTTP server binds all interfaces by design; network access control belongs to the host environment.

@@ -38,7 +38,7 @@ rgd cv -help
 
 COMPACT REFERENCES
 
-i38             index:38
+i38             index:38 (read-only whole-index aggregate when dereferenced)
 i38s1           index:38:string:1
 i38s2           index:38:string:2
 i38s3           index:38:string:3
@@ -55,6 +55,9 @@ i38rh1          index:38:rangehex:1
 
 Reference slots are user-facing and 1-based. Older direct index commands
 retain their documented 0-based slots.
+
+The content Boolean commands accept any compact ref above as an exact scope,
+`i38` as the whole-index aggregate, or `__all__` for the complete file.
 
 REFERENCE OPERATIONS WITH A LOADED FILE
 

@@ -20,6 +20,7 @@ rgd cv -help
 
 READS
 
+rgd rg i38
 rgd rg i38s1
 rgd rg i38db7
 rgd rg i38dbl
@@ -43,6 +44,8 @@ BOOLEAN AND DIFF
 
 rgd rb i38db7 gt 8 --then-val TRUE --else-val FALSE
 rgd rb i38s1 contains waterfront --then-val TRUE --else-val FALSE
+rgd ba i38s1 waterfront approved
+rgd bx i38z1 active archived
 rgd rd i38s1 i39s1
 
 CONVERSION
@@ -64,5 +67,7 @@ rgd tx status
 rgd tx rollback
 rgd st
 
-Use rgd --help for every shorthand and its canonical argument line. Use
-regedited -ex repl for compact-reference and alias tables.
+Use rgd --help for every shorthand and its canonical argument line. Example
+selectors 1-4 are standard PowerShell/Bash/Python/CMD; 5-8 are the matching
+advanced one-liner lanes. Use regedited -ex repl for compact-reference and
+alias tables.

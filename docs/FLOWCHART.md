@@ -156,12 +156,12 @@ flowchart LR
     subgraph SHEL_CMD["shel.sh/XML Commands"]
         c_encap["encap &lt;text&gt; [-m b/c/d]<br>[--extract] [--to] [--set]"]
         c_gh["grab-html &lt;file&gt; &lt;attr&gt;<br>[-m] [--tag] [--set] [-n]"]
-        c_band["bool-and &lt;file&gt; S p1 [p2]..."]
-        c_bnand["bool-nand &lt;file&gt; S &lt;must&gt; &lt;not&gt;"]
-        c_bor["bool-or &lt;file&gt; S p1 [p2]..."]
-        c_bxor["bool-xor &lt;file&gt; S a b"]
-        c_count["count &lt;file&gt; S &lt;pattern&gt;"]
-        c_if["if-contains &lt;file&gt; S p<br>[--then] [--else]"]
+        c_band["bool-and &lt;file&gt; SCOPE p1 [p2]..."]
+        c_bnand["bool-nand &lt;file&gt; SCOPE &lt;must&gt; &lt;not&gt;"]
+        c_bor["bool-or &lt;file&gt; SCOPE p1 [p2]..."]
+        c_bxor["bool-xor &lt;file&gt; SCOPE a b"]
+        c_count["count &lt;file&gt; SCOPE &lt;pattern&gt;"]
+        c_if["if-contains &lt;file&gt; SCOPE p<br>[--then] [--else]"]
     end
 
     subgraph REF_CMD["Native Ref + State Commands"]
@@ -218,10 +218,10 @@ flowchart TD
     end
 
     subgraph PY_BOOL["Boolean Checks"]
-        pb1["subprocess.run([RE, 'bool-and', f, S, p1, p2])"]
+        pb1["subprocess.run([RE, 'bool-and', f, exact_ref, p1, p2])"]
         pb2["result.returncode == 0 # TRUE"]
         pb3["result.returncode == 1 # FALSE"]
-        pb4["re('if-contains', f, S, p, '--then-val', YES, '--else-val', NO)"]
+        pb4["re('if-contains', f, exact_ref, p, '--then-val', YES, '--else-val', NO)"]
     end
 
     subgraph PY_HTML["HTML Extraction"]
