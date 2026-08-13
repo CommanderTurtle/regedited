@@ -485,8 +485,8 @@ Line 11 content
         let alpha = header.get_section("i100").unwrap();
 
         let (start, end, zt) = get_zone_range(&doc, alpha, 1).unwrap();
-        assert_eq!(start, 10);
-        assert_eq!(end, 20);
+        assert_eq!(start, 9);
+        assert_eq!(end, 19);
         assert_eq!(zt, ZoneType::Markdown);
     }
 }

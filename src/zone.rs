@@ -349,15 +349,15 @@ It has multiple lines of content.
             TEST_DOC,
             "Code",
             0,
+            9,
             10,
-            11,
             "test label",
             crate::zone_type::ZoneType::Markdown,
         )
         .unwrap();
 
-        assert_eq!(zone.start_line, 10);
-        assert_eq!(zone.end_line, 11);
+        assert_eq!(zone.start_line, 9);
+        assert_eq!(zone.end_line, 10);
         assert!(zone.content.contains("function hello()"));
     }
 

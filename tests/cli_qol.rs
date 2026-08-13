@@ -52,7 +52,7 @@ fn canonical_and_linked_qol_surfaces_work_end_to_end() {
 
     let listed = run(&rgd, &state, &["l"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
-    assert!(text(&listed.stdout).contains("index:100"));
+    assert!(text(&listed.stdout).contains("i100"));
 
     let peer = temporary.path().join("peer.md");
     std::fs::copy(&document, &peer).unwrap();

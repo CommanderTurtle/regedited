@@ -172,12 +172,12 @@ pub fn filter_by_name<'a>(
 }
 
 /// Filter scanned indexes by database value range.
-pub fn filter_by_value(
-    sections: &[ScannedSection],
+pub fn filter_by_value<'a>(
+    sections: &'a [ScannedSection],
     index: usize,
     min: &DecimalValue,
     max: &DecimalValue,
-) -> Vec<&ScannedSection> {
+) -> Vec<&'a ScannedSection> {
     if index >= 9 {
         return Vec::new();
     }
