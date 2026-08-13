@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0
 //! # Database Line Parser
 //!
-//! Parses and manages the structured data lines in each section:
+//! Parses and manages the structured data lines in each index record:
 //! - Index number in `index: N` format
 //! - hex-word line with 6 hex-words (colon-separated)
-//! - 9 base-10 numerical values (pipe-separated ` | ` — Obsidian-friendly)
+//! - 9 exact base-10 decimal values (pipe-separated ` | `)
 //! - 3 plain string values (one per line)
 //!
 //! Displayed as a pipes-and-dashes markdown table for human readability.
@@ -12,18 +12,20 @@
 //! ## Format in the markdown file
 //!
 //! ```markdown
-//! ## SECTION: MySection
+//! arbitrary prefix regedited open arbitrary suffix
 //! index: 123
 //! 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
-//! 1 | 100 | 50 | 200 | 25 | 75 | 10 | 20 | 30     <- 9 numbers (pipe-separated)
+//! 1 | 100.25 | -0.125 | 200 | 25 | 75 | 10 | 20 | 30
 //! First string line, generic oneliner
 //! Second string line, generic oneliner
 //! Third string line, generic oneliner
-//! ---
-//! ... (content) ...
 //! ```
 
 use crate::{RegeditedError, Result};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::cmp::Ordering;
+use std::fmt;
+use std::str::FromStr;
 
 /// Number of numeric fields in a database line
 pub const NUMERIC_COUNT: usize = 9;
@@ -31,11 +33,223 @@ pub const NUMERIC_COUNT: usize = 9;
 /// Number of string fields in a database line
 pub const STRING_COUNT: usize = 3;
 
+/// An exact fixed-point decimal that preserves the user's original spelling.
+///
+/// Precision is limited only by available memory. Scientific notation is
+/// deliberately excluded so the plaintext database row remains predictable.
+#[derive(Debug, Clone)]
+pub struct DecimalValue {
+    literal: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DecimalParts {
+    sign: i8,
+    digits: String,
+    scale: usize,
+}
+
+impl DecimalValue {
+    pub fn parse(value: &str) -> Result<Self> {
+        let literal = value.trim();
+        if literal.is_empty() || literal.lines().count() != 1 {
+            return Err(RegeditedError::InvalidDbLine(
+                "Decimal value must be one non-empty line".to_string(),
+            ));
+        }
+
+        let unsigned = literal
+            .strip_prefix('+')
+            .or_else(|| literal.strip_prefix('-'))
+            .unwrap_or(literal);
+        let mut dots = 0usize;
+        let mut digits = 0usize;
+        for byte in unsigned.bytes() {
+            if byte == b'.' {
+                dots += 1;
+            } else if byte.is_ascii_digit() {
+                digits += 1;
+            } else {
+                return Err(RegeditedError::InvalidDbLine(format!(
+                    "Invalid decimal value '{}'",
+                    literal
+                )));
+            }
+        }
+        if digits == 0 || dots > 1 {
+            return Err(RegeditedError::InvalidDbLine(format!(
+                "Invalid decimal value '{}'",
+                literal
+            )));
+        }
+
+        Ok(Self {
+            literal: literal.to_string(),
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.literal
+    }
+
+    fn parts(&self) -> DecimalParts {
+        let (sign, unsigned) = if let Some(value) = self.literal.strip_prefix('-') {
+            (-1, value)
+        } else if let Some(value) = self.literal.strip_prefix('+') {
+            (1, value)
+        } else {
+            (1, self.literal.as_str())
+        };
+        let (integer, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+        let digits = format!("{}{}", integer, fraction);
+        let mut scale = fraction.len();
+        let trimmed = digits.trim_start_matches('0');
+        let mut digits = if trimmed.is_empty() {
+            "0".to_string()
+        } else {
+            trimmed.to_string()
+        };
+        while scale > 0 && digits.ends_with('0') {
+            digits.pop();
+            scale -= 1;
+        }
+        if digits.is_empty() || digits.bytes().all(|byte| byte == b'0') {
+            return DecimalParts {
+                sign: 0,
+                digits: "0".to_string(),
+                scale: 0,
+            };
+        }
+        DecimalParts {
+            sign,
+            digits,
+            scale,
+        }
+    }
+
+    fn json_literal(&self) -> String {
+        let negative = self.literal.starts_with('-');
+        let unsigned = self
+            .literal
+            .strip_prefix('+')
+            .or_else(|| self.literal.strip_prefix('-'))
+            .unwrap_or(&self.literal);
+        let (integer, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+        let integer = integer.trim_start_matches('0');
+        let integer = if integer.is_empty() { "0" } else { integer };
+        let mut result = String::new();
+        if negative && self.parts().sign != 0 {
+            result.push('-');
+        }
+        result.push_str(integer);
+        if unsigned.contains('.') {
+            result.push('.');
+            result.push_str(if fraction.is_empty() { "0" } else { fraction });
+        }
+        result
+    }
+}
+
+impl Default for DecimalValue {
+    fn default() -> Self {
+        Self {
+            literal: "0".to_string(),
+        }
+    }
+}
+
+impl From<i64> for DecimalValue {
+    fn from(value: i64) -> Self {
+        Self {
+            literal: value.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for DecimalValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(width) = formatter.width() {
+            write!(formatter, "{:>width$}", self.literal, width = width)
+        } else {
+            formatter.write_str(&self.literal)
+        }
+    }
+}
+
+impl PartialEq for DecimalValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for DecimalValue {}
+
+impl PartialOrd for DecimalValue {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DecimalValue {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let left = self.parts();
+        let right = other.parts();
+        if left.sign != right.sign {
+            return left.sign.cmp(&right.sign);
+        }
+        if left.sign == 0 {
+            return Ordering::Equal;
+        }
+
+        let left_integer_digits = left.digits.len() as i128 - left.scale as i128;
+        let right_integer_digits = right.digits.len() as i128 - right.scale as i128;
+        let magnitude = left_integer_digits
+            .cmp(&right_integer_digits)
+            .then_with(|| {
+                let width = left.digits.len().max(right.digits.len());
+                (0..width)
+                    .map(|index| {
+                        let l = left.digits.as_bytes().get(index).copied().unwrap_or(b'0');
+                        let r = right.digits.as_bytes().get(index).copied().unwrap_or(b'0');
+                        l.cmp(&r)
+                    })
+                    .find(|ordering| *ordering != Ordering::Equal)
+                    .unwrap_or(Ordering::Equal)
+            });
+        if left.sign < 0 {
+            magnitude.reverse()
+        } else {
+            magnitude
+        }
+    }
+}
+
+impl Serialize for DecimalValue {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let number = serde_json::Number::from_str(&self.json_literal())
+            .map_err(serde::ser::Error::custom)?;
+        number.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DecimalValue {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let number = serde_json::Number::deserialize(deserializer)?;
+        Self::parse(&number.to_string()).map_err(serde::de::Error::custom)
+    }
+}
+
 /// A structured database line containing 9 numeric values and 3 strings
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbLine {
     /// Nine numeric values (tabular data, easily callable/replaceable)
-    pub numbers: [i64; NUMERIC_COUNT],
+    pub numbers: [DecimalValue; NUMERIC_COUNT],
     /// Three string values (labels, notes, references)
     pub strings: [String; STRING_COUNT],
 }
@@ -43,7 +257,7 @@ pub struct DbLine {
 impl Default for DbLine {
     fn default() -> Self {
         Self {
-            numbers: [0; NUMERIC_COUNT],
+            numbers: std::array::from_fn(|_| DecimalValue::default()),
             strings: [String::new(), String::new(), String::new()],
         }
     }
@@ -57,10 +271,13 @@ impl DbLine {
 
     /// Create from raw values
     pub fn from_values(numbers: [i64; NUMERIC_COUNT], strings: [String; STRING_COUNT]) -> Self {
-        Self { numbers, strings }
+        Self {
+            numbers: numbers.map(DecimalValue::from),
+            strings,
+        }
     }
 
-    /// Parse a DbLine from a section's data lines
+    /// Parse a DbLine from an index record's data lines.
     ///
     /// `lines` should contain:
     /// - line 0: 9 pipe-separated numbers (the numeric line)
@@ -91,10 +308,15 @@ impl DbLine {
             )));
         }
 
-        let mut numbers = [0i64; NUMERIC_COUNT];
+        let mut numbers = std::array::from_fn(|_| DecimalValue::default());
         for (i, part) in numeric_parts.iter().enumerate() {
-            numbers[i] = part.trim().parse::<i64>().map_err(|e| {
-                RegeditedError::InvalidDbLine(format!("Cannot parse number {i}: '{part}' ({e})"))
+            numbers[i] = DecimalValue::parse(part).map_err(|error| {
+                RegeditedError::InvalidDbLine(format!(
+                    "Cannot parse decimal {}: '{}' ({})",
+                    i + 1,
+                    part.trim(),
+                    error
+                ))
             })?;
         }
 
@@ -140,15 +362,16 @@ impl DbLine {
     }
 
     /// Get a specific number by index (0-8)
-    pub fn get_number(&self, index: usize) -> Option<i64> {
-        self.numbers.get(index).copied()
+    pub fn get_number(&self, index: usize) -> Option<&DecimalValue> {
+        self.numbers.get(index)
     }
 
     /// Set a specific number by index (0-8)
-    pub fn set_number(&mut self, index: usize, value: i64) -> Result<()> {
+    pub fn set_number(&mut self, index: usize, value: DecimalValue) -> Result<()> {
         if index >= NUMERIC_COUNT {
             return Err(RegeditedError::Parse(format!(
-                "Number index {index} out of range (0-{NUMERIC_COUNT})"
+                "Number index {index} out of range (0-{})",
+                NUMERIC_COUNT - 1
             )));
         }
         self.numbers[index] = value;
@@ -164,7 +387,8 @@ impl DbLine {
     pub fn set_string(&mut self, index: usize, value: String) -> Result<()> {
         if index >= STRING_COUNT {
             return Err(RegeditedError::Parse(format!(
-                "String index {index} out of range (0-{STRING_COUNT})"
+                "String index {index} out of range (0-{})",
+                STRING_COUNT - 1
             )));
         }
         self.strings[index] = value;
@@ -258,7 +482,7 @@ impl std::fmt::Display for DbLine {
 
 /// Parse just the numeric line (9 pipe-separated values)
 /// Accepts both " | " (new format) and "\t" (legacy) as separators
-pub fn parse_numeric_line(line: &str) -> Result<[i64; NUMERIC_COUNT]> {
+pub fn parse_numeric_line(line: &str) -> Result<[DecimalValue; NUMERIC_COUNT]> {
     let separator = if line.contains(" | ") { " | " } else { "\t" };
     let parts: Vec<&str> = line.split(separator).collect();
     if parts.len() != NUMERIC_COUNT {
@@ -269,20 +493,25 @@ pub fn parse_numeric_line(line: &str) -> Result<[i64; NUMERIC_COUNT]> {
         )));
     }
 
-    let mut numbers = [0i64; NUMERIC_COUNT];
+    let mut numbers = std::array::from_fn(|_| DecimalValue::default());
     for (i, part) in parts.iter().enumerate() {
-        numbers[i] = part.trim().parse::<i64>().map_err(|e| {
-            RegeditedError::InvalidDbLine(format!("Cannot parse number {i}: '{part}' ({e})"))
+        numbers[i] = DecimalValue::parse(part).map_err(|error| {
+            RegeditedError::InvalidDbLine(format!(
+                "Cannot parse decimal {}: '{}' ({})",
+                i + 1,
+                part.trim(),
+                error
+            ))
         })?;
     }
 
     Ok(numbers)
 }
 
-/// A section's complete data block (index + Hex-word line + DbLine)
+/// One complete index data block (index + hex-word line + DbLine).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionData {
-    /// Section index number (stored as `index: N`)
+    /// Numeric index identity (stored as `index: N`).
     pub index: u64,
     /// The hex-word line store line (6 hex-words, colon-separated)
     pub ascii_store: crate::ascii_store::AsciiStore,
@@ -291,7 +520,7 @@ pub struct SectionData {
 }
 
 impl SectionData {
-    /// Create new empty section data
+    /// Create a new empty index data block.
     pub fn new() -> Self {
         Self {
             index: 0,
@@ -300,7 +529,7 @@ impl SectionData {
         }
     }
 
-    /// Parse from the data lines of a section
+    /// Parse from the six structured lines of an index record.
     ///
     /// Lines expected:
     /// 0: `index: N` (new format) or plain `N` (legacy)
@@ -312,7 +541,7 @@ impl SectionData {
     pub fn from_lines(lines: &[&str]) -> Result<Self> {
         if lines.len() < 6 {
             return Err(RegeditedError::InvalidDbLine(format!(
-                "SectionData needs 6 lines (1 index + 1 ASCII + 1 numeric + 3 strings), got {}",
+                "Index record needs 6 lines (1 index + 1 hex-word + 1 numeric + 3 strings), got {}",
                 lines.len()
             )));
         }
@@ -325,7 +554,7 @@ impl SectionData {
             index_str.parse::<u64>()
         }
         .map_err(|e| {
-            RegeditedError::InvalidDbLine(format!("Invalid section index '{}': {e}", lines[0]))
+            RegeditedError::InvalidDbLine(format!("Invalid numeric index '{}': {e}", lines[0]))
         })?;
 
         let ascii_store = crate::ascii_store::AsciiStore::from_line(lines[1])?;
@@ -385,7 +614,10 @@ mod tests {
         ];
 
         let db = DbLine::from_lines(&lines).unwrap();
-        assert_eq!(db.numbers, [1, 100, 50, 200, 25, 75, 10, 20, 30]);
+        assert_eq!(
+            db.numbers,
+            [1, 100, 50, 200, 25, 75, 10, 20, 30].map(DecimalValue::from)
+        );
         assert_eq!(db.strings[0], "First string line, generic oneliner");
         assert_eq!(db.strings[1], "Second string line, generic oneliner");
         assert_eq!(db.strings[2], "Third string line, generic oneliner");
@@ -402,7 +634,10 @@ mod tests {
         ];
 
         let db = DbLine::from_lines(&lines).unwrap();
-        assert_eq!(db.numbers, [1, 100, 50, 200, 25, 75, 10, 20, 30]);
+        assert_eq!(
+            db.numbers,
+            [1, 100, 50, 200, 25, 75, 10, 20, 30].map(DecimalValue::from)
+        );
     }
 
     #[test]
@@ -449,10 +684,10 @@ mod tests {
     fn test_db_line_get_set() {
         let mut db = DbLine::new();
 
-        db.set_number(0, 42).unwrap();
-        db.set_number(8, 999).unwrap();
-        assert_eq!(db.get_number(0), Some(42));
-        assert_eq!(db.get_number(8), Some(999));
+        db.set_number(0, 42.into()).unwrap();
+        db.set_number(8, 999.into()).unwrap();
+        assert_eq!(db.get_number(0), Some(&DecimalValue::from(42)));
+        assert_eq!(db.get_number(8), Some(&DecimalValue::from(999)));
         assert_eq!(db.get_number(9), None);
 
         db.set_string(0, "hello".into()).unwrap();
@@ -466,24 +701,27 @@ mod tests {
     #[test]
     fn test_db_line_invalid_index() {
         let mut db = DbLine::new();
-        assert!(db.set_number(9, 1).is_err());
+        assert!(db.set_number(9, 1.into()).is_err());
         assert!(db.set_string(3, "x".into()).is_err());
     }
 
     #[test]
     fn test_parse_numeric_line() {
         let nums = parse_numeric_line("1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9").unwrap();
-        assert_eq!(nums, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(nums, [1, 2, 3, 4, 5, 6, 7, 8, 9].map(DecimalValue::from));
 
         let nums = parse_numeric_line("-10 | 0 | 999999 | 42 | -1 | 1000 | 0 | 0 | 0").unwrap();
-        assert_eq!(nums, [-10, 0, 999999, 42, -1, 1000, 0, 0, 0]);
+        assert_eq!(
+            nums,
+            [-10, 0, 999999, 42, -1, 1000, 0, 0, 0].map(DecimalValue::from)
+        );
     }
 
     #[test]
     fn test_parse_numeric_line_legacy_tabs() {
         // Legacy tab-separated format should still parse
         let nums = parse_numeric_line("1\t2\t3\t4\t5\t6\t7\t8\t9").unwrap();
-        assert_eq!(nums, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(nums, [1, 2, 3, 4, 5, 6, 7, 8, 9].map(DecimalValue::from));
     }
 
     #[test]

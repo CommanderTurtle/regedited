@@ -38,7 +38,7 @@
 //! guardrails: type enforcement, allowed values, required fields.
 //! This is something Windows has never had.
 
-use crate::{RegeditedError, Result};
+use crate::{db_line::DecimalValue, RegeditedError, Result};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -59,6 +59,8 @@ pub enum SchemaFieldType {
     String,
     /// Integer value (i64)
     Integer,
+    /// Exact fixed-point decimal value
+    Decimal,
     /// Boolean value (true/false)
     Boolean,
     /// File path
@@ -76,7 +78,8 @@ impl SchemaFieldType {
     pub fn from_name(name: &str, constraint: Option<&str>) -> Result<Self> {
         match name {
             "string" | "str" | "text" => Ok(SchemaFieldType::String),
-            "int" | "integer" | "number" | "i64" => Ok(SchemaFieldType::Integer),
+            "int" | "integer" | "i64" => Ok(SchemaFieldType::Integer),
+            "decimal" | "number" | "numeric" => Ok(SchemaFieldType::Decimal),
             "bool" | "boolean" | "flag" => Ok(SchemaFieldType::Boolean),
             "path" | "filepath" | "dir" => Ok(SchemaFieldType::Path),
             "array" | "list" | "vec" => Ok(SchemaFieldType::Array),
@@ -103,6 +106,7 @@ impl SchemaFieldType {
         match self {
             SchemaFieldType::String => "string",
             SchemaFieldType::Integer => "integer",
+            SchemaFieldType::Decimal => "decimal",
             SchemaFieldType::Boolean => "boolean",
             SchemaFieldType::Path => "path",
             SchemaFieldType::Enum(_) => "enum",
@@ -124,6 +128,7 @@ impl SchemaFieldType {
                 }
                 Ok(())
             }
+            SchemaFieldType::Decimal => DecimalValue::parse(value).map(|_| ()),
             SchemaFieldType::Boolean => {
                 let v = value.to_lowercase();
                 if v != "true" && v != "false" && v != "1" && v != "0" && v != "yes" && v != "no" {

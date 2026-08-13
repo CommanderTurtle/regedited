@@ -23,6 +23,7 @@
 //! state. Regedited transactions guarantee all-or-nothing semantics.
 
 use crate::{
+    db_line::DecimalValue,
     wal::{Wal, WalOperation},
     RegeditedError, Result,
 };
@@ -100,14 +101,14 @@ impl Transaction {
         &mut self,
         section: &str,
         index: usize,
-        old_value: i64,
-        new_value: i64,
+        old_value: impl ToString,
+        new_value: impl ToString,
     ) -> Result<()> {
         let op = WalOperation::SetNum {
             section: section.to_string(),
             index,
-            old_value,
-            new_value,
+            old_value: DecimalValue::parse(&old_value.to_string())?,
+            new_value: DecimalValue::parse(&new_value.to_string())?,
         };
         self.stage(op)
     }

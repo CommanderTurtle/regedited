@@ -2,13 +2,13 @@
 //! # Store
 //!
 //! The main high-level API for Regedited operations. Provides methods for
-//! reading, writing, and manipulating structured markdown documents.
+//! reading, writing, and manipulating indexed UTF-8 documents.
 //!
 //! ## Core Operations
 //!
-//! - **Read**: Parse sections, extract data blocks, view database tables
+//! - **Read**: Parse index records, extract data blocks, view database tables
 //! - **Write**: Update hex-word lines, numeric values, strings
-//! - **Zones**: Extract content by line ranges, grep within sections
+//! - **Zones**: Extract content by absolute line ranges
 //! - **Clipboard**: Copy strings to system clipboard
 //!
 //! ## Example
@@ -18,22 +18,22 @@
 //!
 //! let store = Store::open("myfile.md").unwrap();
 //!
-//! // List all sections
-//! let sections = store.list_sections();
+//! // List all fixed index records (legacy method name retained)
+//! let indexes = store.list_sections();
 //!
-//! // View a section's database table
-//! let table = store.get_db_table("MySection").unwrap();
+//! // View an index's database table
+//! let table = store.get_db_table("i64").unwrap();
 //! println!("{}", table);
 //!
-//! // Extract a zone
-//! let zone = store.get_zone("MySection", 0).unwrap();
+//! // Extract an absolute zone
+//! let zone = store.get_zone("i64", 0).unwrap();
 //! println!("{}", zone.content());
 //! ```
 
 use crate::{
     ascii_store::AsciiStore,
     clip,
-    db_line::{DbLine, SectionData},
+    db_line::{DbLine, DecimalValue, SectionData},
     echo::{safe_echo, EchoResult},
     header::{
         extract_section_content, extract_section_data, scan_content, update_section_data,
@@ -156,51 +156,31 @@ impl Store {
         self.dirty
     }
 
-    // ==================== SECTION OPERATIONS ====================
+    // ==================== INDEX OPERATIONS ====================
 
-    /// List all section names
+    /// List all internal index keys.
     pub fn list_sections(&self) -> Vec<&str> {
         self.header.section_names()
     }
 
-    /// Get section info by numeric index reference, with legacy names as fallback.
+    /// Get index info by numeric reference, with legacy internal keys as fallback.
     pub fn get_section(&self, reference: &str) -> Result<&SectionInfo> {
         self.header.resolve_section(reference)
     }
 
-    /// Check if a section exists
+    /// Check if an index exists.
     pub fn has_section(&self, name: &str) -> bool {
         self.get_section(name).is_ok()
     }
 
-    /// Add a new section to the document
-    pub fn add_section(&mut self, name: &str) -> Result<()> {
-        if self.has_section(name) {
-            return Err(RegeditedError::Parse(format!(
-                "Section '{}' already exists",
-                name
-            )));
-        }
-
-        let blank_ascii = crate::ascii_store::blank_ascii_store();
-        let next_index = self.header.section_count() + 1;
-        let section_text = format!(
-            "\n## SECTION: {0}\nindex: {1}\n{2}\n0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0\n\n\n\n---\n",
-            name, next_index, blank_ascii
-        );
-
-        self.content.push_str(&section_text);
-        self.dirty = true;
-
-        // Re-scan
-        self.header = scan_content(&self.content)?;
-        self.section_cache.clear();
-
-        if self.config.auto_save {
-            self.save()?;
-        }
-
-        Ok(())
+    /// Compatibility spelling for adding a canonical numeric index.
+    pub fn add_section(&mut self, reference: &str) -> Result<()> {
+        let registry_index = crate::header::parse_index_reference(reference).ok_or_else(|| {
+            RegeditedError::Parse(
+                "Indexes must use a numeric reference such as 64, i64, or index:64".to_string(),
+            )
+        })?;
+        self.add_index(registry_index)
     }
 
     /// Add a canonical `regedited open` index without a section-name identity.
@@ -218,7 +198,7 @@ impl Store {
 
         let blank_ascii = crate::ascii_store::blank_ascii_store();
         let index_text = format!(
-            "\nregedited open\nindex: {0}\n{1}\n0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0\n\n\n\n---\n",
+            "\nregedited open\nindex: {0}\n{1}\n0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0\n\n\n\n",
             registry_index, blank_ascii
         );
         self.content.push_str(&index_text);
@@ -232,13 +212,13 @@ impl Store {
         Ok(())
     }
 
-    /// Remove a section from the document
+    /// Remove only the marker and its six structured lines.
     pub fn remove_section(&mut self, name: &str) -> Result<()> {
         let section = self.get_section(name)?.clone();
 
         let lines: Vec<&str> = self.content.lines().collect();
         let start = section.header_line;
-        let end = section.content_end + 1;
+        let end = section.string3_line + 1;
 
         if end > lines.len() {
             return Err(RegeditedError::ZoneOutOfBounds {
@@ -255,6 +235,13 @@ impl Store {
         }
 
         self.content = new_lines.join("\n");
+        self.content = crate::zone_editor::apply_line_deltas(
+            &self.content,
+            &[crate::zone_editor::LineDelta {
+                start_line: end,
+                delta: -((end - start) as i64),
+            }],
+        )?;
         self.dirty = true;
         self.header = scan_content(&self.content)?;
         self.section_cache.remove(name);
@@ -268,7 +255,7 @@ impl Store {
 
     // ==================== DATA READING ====================
 
-    /// Get a section's data (Hex-word line + DbLine)
+    /// Get an index record's data (hex-word line + DbLine).
     fn get_section_data(&mut self, name: &str) -> Result<SectionData> {
         let resolved_name = self.get_section(name)?.name.clone();
         // Check cache first
@@ -287,38 +274,39 @@ impl Store {
         Ok(data)
     }
 
-    /// Get a section's Hex-word line
+    /// Get an index record's hex-word line.
     pub fn get_ascii_store(&mut self, name: &str) -> Result<AsciiStore> {
         let data = self.get_section_data(name)?;
         Ok(data.ascii_store)
     }
 
-    /// Get a section's database line
+    /// Get an index record's database line.
     pub fn get_db_line(&mut self, name: &str) -> Result<DbLine> {
         let data = self.get_section_data(name)?;
         Ok(data.db_line)
     }
 
-    /// Get a section's database table as markdown
+    /// Get an index record's database table as Markdown.
     pub fn get_db_table(&mut self, name: &str) -> Result<String> {
         let data = self.get_section_data(name)?;
         Ok(data.db_line.to_markdown_table())
     }
 
-    /// Get a section's content (markdown between --- and next section)
+    /// Get the complete document after validating an index reference.
     pub fn get_section_content(&self, name: &str) -> Result<String> {
         let section = self.get_section(name)?.clone();
         extract_section_content(&self.content, &section)
     }
 
-    /// Get a specific numeric value from a section
-    pub fn get_number(&mut self, section_name: &str, index: usize) -> Result<i64> {
+    /// Get a specific numeric value from an index record.
+    pub fn get_number(&mut self, section_name: &str, index: usize) -> Result<DecimalValue> {
         let db = self.get_db_line(section_name)?;
         db.get_number(index)
+            .cloned()
             .ok_or_else(|| RegeditedError::Parse(format!("Number index {index} out of range")))
     }
 
-    /// Get a specific string from a section
+    /// Get a specific string from an index record.
     pub fn get_string(&mut self, section_name: &str, index: usize) -> Result<String> {
         let db = self.get_db_line(section_name)?;
         db.get_string(index)
@@ -326,7 +314,7 @@ impl Store {
             .ok_or_else(|| RegeditedError::Parse(format!("String index {index} out of range")))
     }
 
-    /// Get a zone from a section
+    /// Resolve a zone through an index record.
     pub fn get_zone(&mut self, section_name: &str, zone_index: usize) -> Result<Zone> {
         let section = self.get_section(section_name)?.clone();
         let data = self.get_section_data(section_name)?;
@@ -340,7 +328,7 @@ impl Store {
 
     // ==================== DATA WRITING ====================
 
-    /// Write a section's data back to content
+    /// Write an index record's six structured lines back to the document.
     fn write_section_data(&mut self, name: &str, data: &SectionData) -> Result<()> {
         let section = self.get_section(name)?.clone();
         let resolved_name = section.name.clone();
@@ -358,7 +346,7 @@ impl Store {
         Ok(())
     }
 
-    /// Update the entire Hex-word line for a section
+    /// Update the entire hex-word line for an index record.
     pub fn update_ascii_store(&mut self, name: &str, ascii: AsciiStore) -> Result<()> {
         let mut data = self.get_section_data(name)?;
         data.ascii_store = ascii;
@@ -381,7 +369,12 @@ impl Store {
     }
 
     /// Update a specific numeric value
-    pub fn update_number(&mut self, section_name: &str, index: usize, value: i64) -> Result<()> {
+    pub fn update_number(
+        &mut self,
+        section_name: &str,
+        index: usize,
+        value: DecimalValue,
+    ) -> Result<()> {
         let mut data = self.get_section_data(section_name)?;
         data.db_line.set_number(index, value)?;
         self.write_section_data(section_name, &data)
@@ -394,7 +387,7 @@ impl Store {
         self.write_section_data(section_name, &data)
     }
 
-    /// Update the database line for a section
+    /// Update the database line for an index record.
     pub fn update_db_line(&mut self, section_name: &str, db_line: DbLine) -> Result<()> {
         let mut data = self.get_section_data(section_name)?;
         data.db_line = db_line;
@@ -405,13 +398,13 @@ impl Store {
     pub fn batch_update(
         &mut self,
         section_name: &str,
-        numbers: &[(usize, i64)],
+        numbers: &[(usize, DecimalValue)],
         strings: &[(usize, String)],
     ) -> Result<()> {
         let mut data = self.get_section_data(section_name)?;
 
         for (index, value) in numbers {
-            data.db_line.set_number(*index, *value)?;
+            data.db_line.set_number(*index, value.clone())?;
         }
 
         for (index, value) in strings {
@@ -515,24 +508,22 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         let content = r#"# Test Document
 
-## SECTION: Intro
+regedited open
 index: 100
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 intro one
 intro two
 intro three
----
 Welcome to the intro.
 
-## SECTION: Config
+regedited open
 index: 200
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90
 config path
 config notes
 config ref
----
 Configuration here.
 "#;
         file.write_all(content.as_bytes()).unwrap();
@@ -545,8 +536,8 @@ Configuration here.
         let store = Store::open(file.path()).unwrap();
 
         assert_eq!(store.list_sections().len(), 2);
-        assert!(store.has_section("Intro"));
-        assert!(store.has_section("Config"));
+        assert!(store.has_section("i100"));
+        assert!(store.has_section("i200"));
     }
 
     #[test]
@@ -554,8 +545,8 @@ Configuration here.
         let (file, _) = create_test_file();
         let mut store = Store::open(file.path()).unwrap();
 
-        let db = store.get_db_line("Intro").unwrap();
-        assert_eq!(db.numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let db = store.get_db_line("i100").unwrap();
+        assert_eq!(db.numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9].map(DecimalValue::from));
         assert_eq!(db.strings[0], "intro one");
     }
 
@@ -564,7 +555,7 @@ Configuration here.
         let (file, _) = create_test_file();
         let mut store = Store::open(file.path()).unwrap();
 
-        let table = store.get_db_table("Config").unwrap();
+        let table = store.get_db_table("i200").unwrap();
         assert!(table.contains("10"));
         assert!(table.contains("20"));
         assert!(table.contains("config path"));
@@ -576,11 +567,11 @@ Configuration here.
         let mut store = Store::open(file.path()).unwrap();
         store.config.auto_save = false;
 
-        store.update_number("Intro", 0, 99).unwrap();
+        store.update_number("i100", 0, 99.into()).unwrap();
 
-        let db = store.get_db_line("Intro").unwrap();
-        assert_eq!(db.numbers[0], 99);
-        assert_eq!(db.numbers[1], 2); // Others unchanged
+        let db = store.get_db_line("i100").unwrap();
+        assert_eq!(db.numbers[0], DecimalValue::from(99));
+        assert_eq!(db.numbers[1], DecimalValue::from(2)); // Others unchanged
     }
 
     #[test]
@@ -590,10 +581,10 @@ Configuration here.
         store.config.auto_save = false;
 
         store
-            .update_string("Intro", 0, "new string".to_string())
+            .update_string("i100", 0, "new string".to_string())
             .unwrap();
 
-        let db = store.get_db_line("Intro").unwrap();
+        let db = store.get_db_line("i100").unwrap();
         assert_eq!(db.strings[0], "new string");
     }
 
@@ -604,10 +595,10 @@ Configuration here.
         store.config.auto_save = false;
 
         store
-            .update_zone("Config", 0, 100, 200, crate::zone_type::ZoneType::Code)
+            .update_zone("i200", 0, 100, 200, crate::zone_type::ZoneType::Code)
             .unwrap();
 
-        let ascii = store.get_ascii_store("Config").unwrap();
+        let ascii = store.get_ascii_store("i200").unwrap();
         assert_eq!(ascii.zones[0].start, 100);
         assert_eq!(ascii.zones[0].end, 200);
         assert_eq!(ascii.zones[0].zone_type, crate::zone_type::ZoneType::Code);
@@ -621,15 +612,15 @@ Configuration here.
 
         store
             .batch_update(
-                "Intro",
-                &[(0, 10), (1, 20)],
+                "i100",
+                &[(0, 10.into()), (1, 20.into())],
                 &[(0, "batch1".to_string()), (1, "batch2".to_string())],
             )
             .unwrap();
 
-        let db = store.get_db_line("Intro").unwrap();
-        assert_eq!(db.numbers[0], 10);
-        assert_eq!(db.numbers[1], 20);
+        let db = store.get_db_line("i100").unwrap();
+        assert_eq!(db.numbers[0], DecimalValue::from(10));
+        assert_eq!(db.numbers[1], DecimalValue::from(20));
         assert_eq!(db.strings[0], "batch1");
         assert_eq!(db.strings[1], "batch2");
     }
@@ -640,14 +631,13 @@ Configuration here.
         let mut store = Store::open(file.path()).unwrap();
         store.config.auto_save = false;
 
-        store.add_section("NewSection").unwrap();
+        store.add_section("900").unwrap();
 
-        assert!(store.has_section("NewSection"));
+        assert!(store.has_section("i900"));
         assert_eq!(store.list_sections().len(), 3);
 
         // Check raw content has the new section with correct format
-        assert!(store.content.contains("## SECTION: NewSection"));
-        assert!(store.content.contains("index:"));
+        assert!(store.content.contains("regedited open\nindex: 900"));
         assert!(store.content.contains("0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0"));
     }
 
@@ -657,20 +647,21 @@ Configuration here.
         let mut store = Store::open(file.path()).unwrap();
         store.config.auto_save = false;
 
-        store.remove_section("Intro").unwrap();
+        store.remove_section("i100").unwrap();
 
-        assert!(!store.has_section("Intro"));
-        assert!(store.has_section("Config"));
+        assert!(!store.has_section("i100"));
+        assert!(store.has_section("i200"));
     }
 
     #[test]
-    fn test_case_insensitive_lookup() {
+    fn test_canonical_index_lookup() {
         let (file, _) = create_test_file();
         let store = Store::open(file.path()).unwrap();
 
-        assert!(store.has_section("intro")); // lowercase
-        assert!(store.has_section("INTRO")); // uppercase
-        assert!(store.has_section("InTrO")); // mixed
+        assert!(store.has_section("index:100"));
+        assert!(store.has_section("INDEX:100"));
+        assert!(store.has_section("i100"));
+        assert!(store.has_section("100"));
     }
 
     #[test]
@@ -678,7 +669,8 @@ Configuration here.
         let (file, _) = create_test_file();
         let store = Store::open(file.path()).unwrap();
 
-        let content = store.get_section_content("Intro").unwrap();
+        let content = store.get_section_content("i100").unwrap();
         assert!(content.contains("Welcome to the intro."));
+        assert!(content.contains("Configuration here."));
     }
 }

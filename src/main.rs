@@ -7,72 +7,72 @@
 //! ```bash
 //! # Safetensors-style fast scan (header-only)
 //! regedited scan myfile.md
-//! regedited scan myfile.md --filter Config
+//! regedited scan myfile.md --filter index:64
 //!
 //! # Diff two files (metadata-only)
 //! regedited diff base.md patched.md
 //!
-//! # Replace sections (safetensors-style patch)
+//! # Replace matching index records (safetensors-style patch)
 //! regedited replace base.md patched.md --output result.md
 //!
 //! # Fast grep (ripgrep-style, memory-mapped)
 //! regedited fgrep myfile.md "pattern"
-//! regedited fgrep myfile.md "pattern" --section MySection
+//! regedited fgrep myfile.md "pattern" --index i64
 //! regedited fgrep-multi myfile.md pattern1 pattern2 pattern3
 //!
 //! # ZONE CONTENT MANIPULATION (Python-scriptable)
-//! # Copy zone content from one section to another
-//! regedited zone-copy myfile.md --from Alpha --from-zone 0 --to Beta --to-zone 1
+//! # Copy zone content from one index to another
+//! regedited zone-copy myfile.md --from i64 --from-zone 0 --to i90 --to-zone 1
 //!
 //! # Append content to a zone (from stdin or --text)
-//! echo "new content" | regedited zone-append myfile.md MySection 0
-//! regedited zone-append myfile.md MySection 0 --text "inline content"
+//! echo "new content" | regedited zone-append myfile.md i64 0
+//! regedited zone-append myfile.md i64 0 --text "inline content"
 //!
 //! # Replace zone content (from stdin or --text)
-//! cat new.md | regedited zone-replace myfile.md MySection 1
+//! cat new.md | regedited zone-replace myfile.md i64 1
 //!
 //! # Extract raw zone content to stdout (for piping)
-//! regedited zone-extract myfile.md MySection 1 > extracted.md
+//! regedited zone-extract myfile.md i64 1 > extracted.md
 //!
 //! # Zone info in machine-readable format (for Python scripts)
-//! regedited zone-info myfile.md MySection 1
+//! regedited zone-info myfile.md i64 1
 //!
-//! # Show database table for a section
-//! regedited db myfile.md MySection
+//! # Show database table for an index
+//! regedited db myfile.md i64
 //!
-//! # Show the hex-word line for a section (`ascii` is the legacy alias)
-//! regedited hexline myfile.md MySection
+//! # Show the hex-word line for an index (`ascii` is the legacy alias)
+//! regedited hexline myfile.md i64
 //!
 //! # Extract a zone (grep by line range)
-//! regedited grep myfile.md MySection 0
+//! regedited grep myfile.md i64 0
 //!
 //! # Copy a string to clipboard
-//! regedited clip myfile.md MySection 2
+//! regedited clip myfile.md i64 2
 //!
 //! # Echo a string (safe for Windows CMD)
-//! regedited echo myfile.md MySection 1
+//! regedited echo myfile.md i64 1
 //!
 //! # Convert line range to hex-words
 //! regedited convert 50 80 --zone-type code
 //!
 //! # Update a numeric value
-//! regedited set-num myfile.md MySection 0 42
+//! regedited set-num myfile.md i64 0 42
 //!
 //! # Update a string
-//! regedited set-str myfile.md MySection 0 "new value"
+//! regedited set-str myfile.md i64 0 "new value"
 //!
 //! # Update a hex-word line zone (with type)
-//! regedited set-zone myfile.md MySection 0 10 100 --zone-type code
+//! regedited set-zone myfile.md i64 0 10 100 --zone-type code
 //!
-//! # Show section content
-//! regedited content myfile.md MySection
+//! # Validate an index and show the shared document
+//! regedited content myfile.md i64
 //!
 //! # Create a new document
 //! regedited new myfile.md "Document Title"
 //!
-//! # Add / remove sections
-//! regedited add myfile.md NewSection
-//! regedited rm myfile.md OldSection
+//! # Add / remove fixed index records
+//! regedited add myfile.md 900
+//! regedited rm myfile.md i900
 //! ```
 
 // SPDX-License-Identifier: AGPL-3.0
@@ -81,6 +81,7 @@ use clap::{error::ErrorKind, CommandFactory, Parser, Subcommand};
 use owo_colors::OwoColorize;
 use regedited::{
     bool_ops::{bool_and, bool_nand, bool_or, bool_xor, count, if_contains},
+    db_line::DecimalValue,
     echo::safe_echo,
     encapsulate::{convert_mode, encapsulate, extract, EncapMode},
     header::scan_content,
@@ -122,7 +123,7 @@ enum Commands {
     Db {
         /// Path to the markdown file
         file: PathBuf,
-        /// Index reference: 64, i64, or index:64 (legacy name accepted)
+        /// Index reference: 64, i64, or index:64
         #[arg(value_name = "INDEX")]
         section: String,
     },
@@ -141,7 +142,7 @@ enum Commands {
     Scan {
         /// Path to the markdown file
         file: PathBuf,
-        /// Filter indexes by legacy key pattern
+        /// Filter indexes by numeric identity or internal key
         #[arg(short, long)]
         filter: Option<String>,
         /// Filter by database value index and range (e.g., "0:5:50")
@@ -411,10 +412,12 @@ enum Commands {
         /// Path to the markdown file
         file: PathBuf,
         /// Left ref spec or literal
+        #[arg(allow_hyphen_values = true)]
         left: String,
         /// Operation: contains, eq, ne, gt, gte, lt, lte
         op: String,
         /// Right ref spec or literal
+        #[arg(allow_hyphen_values = true)]
         right: String,
         /// Value printed when true
         #[arg(long, default_value = "TRUE")]
@@ -564,8 +567,9 @@ enum Commands {
         /// Value index (0-8)
         #[arg(value_name = "SLOT")]
         index: usize,
-        /// New value
-        value: i64,
+        /// New exact decimal value
+        #[arg(allow_hyphen_values = true)]
+        value: String,
     },
 
     /// Update a string value
@@ -617,7 +621,7 @@ enum Commands {
     /// List all zone types and their hex nibble values
     Types,
 
-    /// Show index content (between --- and the next index)
+    /// Show the complete shared document after validating an index reference
     Content {
         /// Path to the markdown file
         file: PathBuf,
@@ -1096,11 +1100,62 @@ fn parse_cli(args: Vec<OsString>, short_mode: bool) -> Cli {
     original.unwrap_or_else(|error| error.exit())
 }
 
+#[derive(Debug, Clone, Copy)]
+enum HelpShell {
+    PowerShell,
+    Bash,
+    Python,
+    Cmd,
+}
+
+impl HelpShell {
+    fn from_selector(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "1" | "pwsh" | "powershell" => Some(Self::PowerShell),
+            "2" | "bash" => Some(Self::Bash),
+            "3" | "python" | "py" => Some(Self::Python),
+            "4" | "cmd" | "bat" => Some(Self::Cmd),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::PowerShell => "1 — PowerShell (pwsh)",
+            Self::Bash => "2 — Bash",
+            Self::Python => "3 — Python",
+            Self::Cmd => "4 — Command Prompt (cmd)",
+        }
+    }
+}
+
+fn requested_help_shell(args: &[OsString]) -> Option<HelpShell> {
+    let position = args.iter().position(|value| {
+        matches!(
+            value.to_str(),
+            Some("--ex" | "-ex" | "--examples" | "-e")
+        )
+    })?;
+    let selector = args
+        .get(position + 1)
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.starts_with('-'))
+        .unwrap_or("1");
+    Some(HelpShell::from_selector(selector).unwrap_or_else(|| {
+        clap::Error::raw(
+            ErrorKind::InvalidValue,
+            format!(
+                "unknown example shell '{}'; use 1/pwsh, 2/bash, 3/python, or 4/cmd",
+                selector
+            ),
+        )
+        .exit()
+    }))
+}
+
 fn handle_help_request(args: &[OsString], short_mode: bool) -> bool {
-    let example_mode = args
-        .iter()
-        .skip(2)
-        .any(|value| matches!(value.to_str(), Some("-e" | "--examples")));
+    let example_shell = requested_help_shell(args);
+    let example_mode = example_shell.is_some();
     let top_level_help = args.len() == 1
         || args
             .get(1)
@@ -1117,7 +1172,7 @@ fn handle_help_request(args: &[OsString], short_mode: bool) -> bool {
             } else {
                 command
             };
-            print_command_help(canonical, short_mode);
+            print_command_help(canonical, short_mode, example_shell);
         } else {
             print_top_level_help(short_mode, false);
         }
@@ -1130,7 +1185,7 @@ fn handle_help_request(args: &[OsString], short_mode: bool) -> bool {
         .any(|value| matches!(value.to_str(), Some("-h" | "--help" | "-help")));
     if requested {
         if let Some(command) = args.get(1).and_then(|value| value.to_str()) {
-            print_command_help(command, short_mode);
+            print_command_help(command, short_mode, example_shell);
         } else {
             print_top_level_help(short_mode, false);
         }
@@ -1146,7 +1201,7 @@ fn print_top_level_help(short_mode: bool, example_mode: bool) {
     println!("{} - Fast indexed plaintext operations", program);
     println!("Usage: {} <COMMAND> [ARGS] [OPTIONS]", program);
     println!(
-        "View: {}  (apply `-e` after `--help` for advanced examples)",
+        "View: {}  (apply `--ex [1|2|3|4]` after `--help` for shell examples)",
         if example_mode {
             "advanced examples"
         } else {
@@ -1159,7 +1214,7 @@ fn print_top_level_help(short_mode: bool, example_mode: bool) {
             None => println!("Loaded: none (`rgd load <FILE>`)"),
         }
     }
-    println!("Index refs: 64 = i64 = index:64; legacy names remain accepted.\n");
+    println!("Index refs: 64 = i64 = index:64.\n");
     if short_mode {
         println!("Line -> zone: rgd cv <p|b|m|d> <START> <END> to i<INDEX> <ZONE 1-3>");
     } else {
@@ -1202,7 +1257,7 @@ fn print_top_level_help(short_mode: bool, example_mode: bool) {
         }
     }
 
-    println!("\nTop-level examples: `{} --help -e`", program);
+    println!("\nTop-level examples: `{} --help --ex [1|2|3|4]`", program);
     println!("Command detail: `<command> -help`");
     println!("Shell guides: `regedited -ex <powershell|repl|python|bash|bat>`");
     if short_mode {
@@ -1439,7 +1494,575 @@ fn help_example(command: &str, short: &str, short_mode: bool) -> String {
     }
 }
 
-fn print_command_help(command_name: &str, short_mode: bool) {
+#[derive(Debug, Clone, Copy)]
+struct CommandExample {
+    purpose: &'static str,
+    command: &'static str,
+}
+
+macro_rules! examples {
+    ($(($purpose:expr, $command:expr)),+ $(,)?) => {
+        vec![$(CommandExample { purpose: $purpose, command: $command }),+]
+    };
+}
+
+fn command_examples(command: &str) -> Vec<CommandExample> {
+    match command {
+        "list" => examples![
+            ("List indexes from the loaded document", "rgd l"),
+            ("List indexes from an explicit document", "rgd l registry.txt"),
+            ("Load a document, then list it", "rgd load registry.txt && rgd l"),
+            ("List without changing any data", "rgd l --no-save"),
+            ("List with verbose diagnostics", "rgd l --verbose"),
+        ],
+        "db" => examples![
+            ("Show all nine decimals and three strings", "rgd db i90"),
+            ("Use a bare numeric index", "rgd db 90"),
+            ("Use the explicit index spelling", "rgd db index:90"),
+            ("Read index 91 from an explicit file", "rgd db registry.txt i91"),
+            ("Inspect decimal spelling without writing", "rgd db i8 --no-save"),
+        ],
+        "hexline" => examples![
+            ("Show all three stored zone pairs", "rgd hl i90"),
+            ("Read a bare numeric index", "rgd hl 90"),
+            ("Read the explicit index form", "rgd hl index:90"),
+            ("Read from a named file", "rgd hl registry.txt i91"),
+            ("Inspect with verbose diagnostics", "rgd hl i8 --verbose"),
+        ],
+        "scan" => examples![
+            ("Scan every canonical index", "rgd s"),
+            ("Filter by numeric identity", "rgd s --filter 90"),
+            ("Filter DB slot zero by exact decimal range", "rgd s --value 0:0.125:9.75"),
+            ("Combine index and decimal filters", "rgd s --filter 9 --value 2:-1.5:4.25"),
+            ("Scan an explicit document", "rgd s registry.txt --value 8:0:100"),
+        ],
+        "diff" => examples![
+            ("Compare all index metadata", "rgd d baseline.txt edited.txt"),
+            ("Compare working file to a saved copy", "rgd d registry.txt registry.before.txt"),
+            ("Compare exact decimal changes", "rgd d decimal-a.txt decimal-b.txt"),
+            ("Compare zone ranges after line movement", "rgd d before.txt after.txt"),
+            ("Emit verbose diff diagnostics", "rgd d baseline.txt edited.txt --verbose"),
+        ],
+        "replace" => examples![
+            ("Replace every matching index record", "rgd r target.txt donor.txt"),
+            ("Write replacement result elsewhere", "rgd r target.txt donor.txt --output merged.txt"),
+            ("Replace only indexes 8 and 90", "rgd r target.txt donor.txt --indexes i8 i90"),
+            ("Select an explicit canonical index", "rgd r target.txt donor.txt --indexes index:91"),
+            ("Preview parsing without auto-save side effects", "rgd r target.txt donor.txt --indexes i8 --no-save"),
+        ],
+        "fgrep" => examples![
+            ("Search the shared document", "rgd f \"closing date\""),
+            ("Validate index 90, then search shared text", "rgd f waterfront --index i90"),
+            ("Search case-insensitively", "rgd f \"Kali Linux\""),
+            ("Search an explicit document", "rgd f registry.txt financing"),
+            ("Combine a phrase with index validation", "rgd f \"follow up Friday\" --index index:8"),
+        ],
+        "fgrep-multi" => examples![
+            ("Find lines containing any supplied term", "rgd fm waterfront inspection financing"),
+            ("Search several exact phrases", "rgd fm \"closing date\" \"follow up\" archived"),
+            ("Search an explicit document", "rgd fm registry.txt buyer seller agent"),
+            ("Mix identifiers and prose", "rgd fm i90 READY \"manual review\""),
+            ("Run without any write path", "rgd fm active pending complete --no-save"),
+        ],
+        "zone-copy" => examples![
+            ("Copy zone zero between indexes", "rgd zc --from i8 --from-zone 0 --to i90 --to-zone 0"),
+            ("Copy zone two into zone one", "rgd zc --from i8 --from-zone 2 --to i90 --to-zone 1"),
+            ("Use bare numeric index references", "rgd zc --from 8 --from-zone 1 --to 90 --to-zone 2"),
+            ("Copy within an explicit document", "rgd zc registry.txt --from i8 --to i90"),
+            ("Inspect argument resolution without saving", "rgd zc --from i8 --to i90 --no-save"),
+        ],
+        "zone-append" => examples![
+            ("Append one literal line to zone zero", "rgd za i90 0 --text \"new line\""),
+            ("Append multiline text from the active shell", "PIPE:new line from stdin|||rgd za i90 0"),
+            ("Append to zone two", "rgd za i8 2 --text \"audit note\""),
+            ("Append in an explicit document", "rgd za registry.txt i90 1 --text \"ready\""),
+            ("Resolve and stage without auto-save", "rgd za i90 0 --text \"preview\" --no-save"),
+        ],
+        "zone-replace" => examples![
+            ("Replace zone zero with literal text", "rgd zr i90 0 --text \"replacement\""),
+            ("Replace from standard input", "PIPE:replacement from stdin|||rgd zr i90 0"),
+            ("Replace zone two", "rgd zr i8 2 --text \"final block\""),
+            ("Replace in an explicit document", "rgd zr registry.txt i90 1 --text \"ready\""),
+            ("Resolve without auto-saving", "rgd zr i90 0 --text \"preview\" --no-save"),
+        ],
+        "zone-extract" => examples![
+            ("Print zone zero", "rgd ze i90 0"),
+            ("Print zone two", "rgd ze i8 2"),
+            ("Use a bare index", "rgd ze 90 1"),
+            ("Read from an explicit document", "rgd ze registry.txt i90 0"),
+            ("Redirect the exact zone payload", "rgd ze i90 0 > extracted.txt"),
+        ],
+        "zone-info" => examples![
+            ("Show machine-readable zone zero metadata", "rgd zi i90 0"),
+            ("Inspect the second zone", "rgd zi i90 1"),
+            ("Inspect the third zone", "rgd zi i8 2"),
+            ("Use a bare numeric index", "rgd zi 90 0"),
+            ("Inspect an explicit document", "rgd zi registry.txt i90 0"),
+        ],
+        "resolve-index" => examples![
+            ("Resolve index 90", "rgd ri 90"),
+            ("Resolve index 8", "rgd ri 8"),
+            ("Resolve index 91", "rgd ri 91"),
+            ("Resolve from an explicit document", "rgd ri registry.txt 90"),
+            ("Print verbose resolution diagnostics", "rgd ri 90 --verbose"),
+        ],
+        "index-zone-extract" => examples![
+            ("Extract zone zero by numeric identity", "rgd ize 90 0"),
+            ("Extract zone one", "rgd ize 90 1"),
+            ("Extract zone two", "rgd ize 8 2"),
+            ("Use an explicit document", "rgd ize registry.txt 90 0"),
+            ("Redirect the payload", "rgd ize 90 0 > zone-90-0.txt"),
+        ],
+        "index-zone-replace" => examples![
+            ("Replace numeric index zone zero", "rgd izr 90 0 --text \"replacement\""),
+            ("Read replacement from stdin", "PIPE:replacement from stdin|||rgd izr 90 0"),
+            ("Replace zone two", "rgd izr 8 2 --text \"final text\""),
+            ("Use an explicit document", "rgd izr registry.txt 90 1 --text \"ready\""),
+            ("Resolve without auto-save", "rgd izr 90 0 --text \"preview\" --no-save"),
+        ],
+        "index-zone-copy" => examples![
+            ("Copy zone zero by numeric identities", "rgd izc --from-index 8 --from-zone 0 --to-index 90 --to-zone 0"),
+            ("Copy zone two to zone one", "rgd izc --from-index 8 --from-zone 2 --to-index 90 --to-zone 1"),
+            ("Copy in the opposite direction", "rgd izc --from-index 90 --from-zone 1 --to-index 8 --to-zone 2"),
+            ("Use an explicit document", "rgd izc registry.txt --from-index 8 --to-index 90"),
+            ("Resolve without auto-save", "rgd izc --from-index 8 --to-index 90 --no-save"),
+        ],
+        "index-zone-transfer" => examples![
+            ("Transfer zone zero between files", "rgd izt --from-file source.txt --from-index 8 --from-zone 0 --to-file target.txt --to-index 90 --to-zone 0"),
+            ("Transfer zone two into zone one", "rgd izt --from-file source.txt --from-index 8 --from-zone 2 --to-file target.txt --to-index 90 --to-zone 1"),
+            ("Transfer in the opposite direction", "rgd izt --from-file target.txt --from-index 90 --from-zone 1 --to-file source.txt --to-index 8 --to-zone 2"),
+            ("Use default zone zero on both sides", "rgd izt --from-file source.txt --from-index 8 --to-file target.txt --to-index 90"),
+            ("Resolve transfer without auto-save", "rgd izt --from-file source.txt --from-index 8 --to-file target.txt --to-index 90 --no-save"),
+        ],
+        "hex-extract" => examples![
+            ("Extract a code range", "rgd he 1x000000E 1x000000F"),
+            ("Extract a markdown range", "rgd he 0x000000E 0x000000F"),
+            ("Extract a media range", "rgd he 2x000000E 2x000000F"),
+            ("Extract from an explicit document", "rgd he registry.txt 1x000000E 1x000000F"),
+            ("Redirect the range", "rgd he 1x000000E 1x000000F > range.txt"),
+        ],
+        "hex-replace" => examples![
+            ("Replace an explicit code range", "rgd hr 1x000000E 1x000000F --text \"replacement\""),
+            ("Read replacement from stdin", "PIPE:replacement from stdin|||rgd hr 1x000000E 1x000000F"),
+            ("Replace a markdown range", "rgd hr 0x000000E 0x000000F --text \"plain text\""),
+            ("Replace in an explicit document", "rgd hr registry.txt 1x000000E 1x000000F --text \"code\""),
+            ("Resolve without auto-save", "rgd hr 1x000000E 1x000000F --text \"preview\" --no-save"),
+        ],
+        "ref-get" => examples![
+            ("Read string two with compact notation", "rgd rg i90s2"),
+            ("Read exact DB value three", "rgd rg i90db3"),
+            ("Read the complete DB line", "rgd rg i90dbl"),
+            ("Read zone one", "rgd rg i90z1"),
+            ("Copy a resolved value", "rgd rg i90s2 --clip"),
+        ],
+        "ref-set" => examples![
+            ("Set string two", "rgd rs i90s2 --text \"ready\""),
+            ("Set an exact nine-place decimal", "rgd rs i90db3 --text 1.234567891"),
+            ("Copy another ref into a string", "rgd rs i90s2 --from i8s1"),
+            ("Append another zone to a zone", "rgd rs i90z1 --from i8z1 --append"),
+            ("Read a value from stdin", "PIPE:stdin value|||rgd rs i90s2"),
+        ],
+        "ref-copy" => examples![
+            ("Copy one string to another", "rgd rc i8s1 i90s2"),
+            ("Append one zone to another", "rgd rc i8z1 i90z2 --append"),
+            ("Copy an exact decimal", "rgd rc i8db3 i90db4"),
+            ("Move a string and clear its source", "rgd rc i8s1 i90s2 --move"),
+            ("Move an absolute zone payload", "rgd rc i8z1 i90z2 --move"),
+        ],
+        "ref-diff" => examples![
+            ("Diff two exact DB values", "rgd rd i8db3 i90db4"),
+            ("Diff two strings", "rgd rd i8s1 i90s2"),
+            ("Diff two zone payloads", "rgd rd i8z1 i90z1"),
+            ("Diff a ref against literal text", "rgd rd i90s1 \"literal:ready\""),
+            ("Diff two explicit line ranges", "rgd rd hex:1x000000E..1x000000F hex:1x0000014..1x0000015"),
+        ],
+        "ref-bool" => examples![
+            ("Compare exact decimals", "rgd rb i8db3 lte i90db4 --then-val 1 --else-val 0"),
+            ("Test string equality", "rgd rb i8s1 eq i90s2 --then-val SAME --else-val DIFFERENT"),
+            ("Test case-insensitive containment", "rgd rb i90z1 contains waterfront --then-val FOUND --else-val MISSING"),
+            ("Perform an XOR-style inequality check", "rgd rb i8s3 ne i90s3 --then-val XOR --else-val SAME"),
+            ("Gate a diff and zone assignment in one shell line", "GATE"),
+        ],
+        "index-str-list" => examples![
+            ("List all three strings for index 90", "rgd ist 90"),
+            ("List strings for index 8", "rgd ist 8"),
+            ("List strings for index 91", "rgd ist 91"),
+            ("Use an explicit document", "rgd ist registry.txt 90"),
+            ("Add verbose diagnostics", "rgd ist 90 --verbose"),
+        ],
+        "index-zone-set-hex" => examples![
+            ("Assign user-facing zone one", "rgd izs 90 1 1x000000E 1x000000F"),
+            ("Assign zone two as markdown", "rgd izs 90 2 0x0000014 0x0000015"),
+            ("Assign zone three as media", "rgd izs 8 3 2x000001E 2x0000020"),
+            ("Use an explicit document", "rgd izs registry.txt 90 1 1x000000E 1x000000F"),
+            ("Clear zone one", "rgd izs 90 1 0x0000000 0x0000000"),
+        ],
+        "index-zone-set-lines" => examples![
+            ("Convert code lines into zone one", "rgd izl 90 1 b 14 15"),
+            ("Assign markdown lines to zone two", "rgd izl 90 2 p 20 21"),
+            ("Assign media lines to zone three", "rgd izl 8 3 m 30 32"),
+            ("Copy converted words while assigning", "rgd izl 90 1 d 14 15 clip"),
+            ("Use the long default type option", "rgd izl 90 2 20 21 --zone-type code"),
+        ],
+        "state" => examples![
+            ("Print current state JSON", "rgd st"),
+            ("Save state JSON", "rgd st > registry.state.json"),
+            ("Inspect an explicit document", "rgd st registry.txt"),
+            ("Capture state before an edit", "rgd st > before.state.json"),
+            ("Emit verbose state diagnostics", "rgd st --verbose"),
+        ],
+        "state-compare" => examples![
+            ("Compare against saved state", "rgd stc registry.state.json"),
+            ("Compare an explicit document", "rgd stc registry.txt registry.state.json"),
+            ("Compare pre-edit state", "rgd stc before.state.json"),
+            ("Compare post-pull state", "rgd stc committed.state.json"),
+            ("Add verbose diagnostics", "rgd stc registry.state.json --verbose"),
+        ],
+        "check" => examples![
+            ("Check committed zone fingerprints", "rgd ck"),
+            ("Check an explicit document", "rgd ck registry.txt"),
+            ("Write the relocation diff without pulling", "rgd ck --no-save"),
+            ("Check after external line movement", "rgd ck moved.txt"),
+            ("Run the guarded checkpoint sequence", "CHECKPOINT"),
+        ],
+        "commit" => examples![
+            ("Create or advance the zone checkpoint", "rgd cm"),
+            ("Check and pull safe relocations", "rgd cm --pull"),
+            ("Commit an explicit document", "rgd cm registry.txt"),
+            ("Commit an explicit document and pull", "rgd cm registry.txt --pull"),
+            ("Run the guarded checkpoint sequence", "CHECKPOINT"),
+        ],
+        "pull" => examples![
+            ("Apply the latest guarded relocation diff", "rgd pl"),
+            ("Pull an explicit document", "rgd pl registry.txt"),
+            ("Inspect first, then pull", "rgd ck && rgd pl"),
+            ("Pull after an external edit", "rgd ck moved.txt && rgd pl moved.txt"),
+            ("Run the full guarded checkpoint sequence", "CHECKPOINT"),
+        ],
+        "undo" => examples![
+            ("Restore the most recent one-step undo", "rgd u"),
+            ("Undo an explicit document", "rgd u registry.txt"),
+            ("Undo a zone replacement", "rgd zr i90 0 --text \"temporary\" && rgd u"),
+            ("Undo a decimal write", "rgd sn i90 3 1.25 && rgd u"),
+            ("Undo with verbose diagnostics", "rgd u --verbose"),
+        ],
+        "grep" => examples![
+            ("Extract zone zero", "rgd g i90 0"),
+            ("Extract zone one", "rgd g i90 1"),
+            ("Extract zone two", "rgd g i8 2"),
+            ("Use an explicit document", "rgd g registry.txt i90 0"),
+            ("Redirect the zone payload", "rgd g i90 0 > zone.txt"),
+        ],
+        "clip" => examples![
+            ("Copy string zero", "rgd c i90 0"),
+            ("Copy string one", "rgd c i90 1"),
+            ("Copy string two", "rgd c i8 2"),
+            ("Use an explicit document", "rgd c registry.txt i90 0"),
+            ("Copy after listing strings", "rgd ist 90 && rgd c i90 1"),
+        ],
+        "echo" => examples![
+            ("Safely echo string zero", "rgd e i90 0"),
+            ("Safely echo string one", "rgd e i90 1"),
+            ("Safely echo string two", "rgd e i8 2"),
+            ("Use an explicit document", "rgd e registry.txt i90 0"),
+            ("Echo after listing strings", "rgd ist 90 && rgd e i90 1"),
+        ],
+        "echo-direct" => examples![
+            ("Echo shell metacharacters safely", "rgd ed \"A&B|C\""),
+            ("Echo redirect characters safely", "rgd ed \"left>right<input\""),
+            ("Echo parentheses safely", "rgd ed \"(alpha) and (beta)\""),
+            ("Echo a Unicode string", "rgd ed \"Florida sunshine ☀\""),
+            ("Echo a quoted value", "rgd ed \"value with spaces\""),
+        ],
+        "getutf" => examples![
+            ("Encode line number 128640", "rgd gu 128640"),
+            ("Encode ASCII A", "rgd gu 65"),
+            ("Encode a BMP value", "rgd gu 9731"),
+            ("Decode UTF-16LE hex", "rgd gu 0 --decode 4100"),
+            ("Decode a surrogate pair", "rgd gu 0 --decode 3DD800DE"),
+        ],
+        "set-num" => examples![
+            ("Write an integer", "rgd sn i90 0 42"),
+            ("Write an exact nine-place decimal", "rgd sn i90 1 1.234567891"),
+            ("Write a negative decimal", "rgd sn i8 2 -0.125"),
+            ("Preserve explicit trailing precision", "rgd sn i90 3 12.340000000"),
+            ("Write in an explicit document", "rgd sn registry.txt i90 4 99.5"),
+        ],
+        "set-str" => examples![
+            ("Write string zero", "rgd ss i90 0 \"follow up Friday\""),
+            ("Write string one", "rgd ss i90 1 \"rgd rg i90z1 --clip\""),
+            ("Write string two", "rgd ss i8 2 \"ready\""),
+            ("Clear a string", "rgd ss i90 0 \"\""),
+            ("Write in an explicit document", "rgd ss registry.txt i90 1 \"audit note\""),
+        ],
+        "set-zone" => examples![
+            ("Set zero-based zone zero to code", "rgd sz i90 0 14 15 --zone-type code"),
+            ("Set zone one to markdown", "rgd sz i90 1 20 21 --zone-type markdown"),
+            ("Set zone two to media", "rgd sz i8 2 30 32 --zone-type media"),
+            ("Clear zone zero", "rgd sz i90 0 0 0 --zone-type markdown"),
+            ("Set a zone in an explicit document", "rgd sz registry.txt i90 0 14 15 --zone-type code"),
+        ],
+        "convert" => examples![
+            ("Convert one code range", "rgd cv b 14 15"),
+            ("Convert three typed ranges", "rgd cv b 14 15 m 20 21 d 30 31"),
+            ("Copy converted words", "rgd cv d 14 15 clip"),
+            ("Convert and assign user-facing zone two", "rgd cv b 14 15 to i90 2"),
+            ("Gate a diff and zone assignment in one shell line", "GATE"),
+        ],
+        "types" => examples![
+            ("List all zone type nibbles", "rgd t"),
+            ("List types before a conversion", "rgd t && rgd cv b 14 15"),
+            ("List types before setting code lines", "rgd t && rgd izl 90 1 b 14 15"),
+            ("List types before setting media lines", "rgd t && rgd izl 90 2 m 20 21"),
+            ("List types with verbose mode", "rgd t --verbose"),
+        ],
+        "content" => examples![
+            ("Validate index 90 and print the shared document", "rgd co i90"),
+            ("Validate index 8 and print the same document", "rgd co i8"),
+            ("Use a bare numeric index", "rgd co 90"),
+            ("Read an explicit document", "rgd co registry.txt i90"),
+            ("Redirect the shared document", "rgd co i90 > document-copy.txt"),
+        ],
+        "lines" => examples![
+            ("Extract lines 14 through 15", "rgd ln 14 15"),
+            ("Extract one line", "rgd ln 20 20"),
+            ("Extract a larger range", "rgd ln 30 45"),
+            ("Read an explicit document", "rgd ln registry.txt 14 15"),
+            ("Redirect the selected lines", "rgd ln 14 15 > lines.txt"),
+        ],
+        "new" => examples![
+            ("Create a new document before adding indexes", "rgd n notes.txt \"Indexed notes\""),
+            ("Create a registry document", "rgd n registry.txt \"Registry\""),
+            ("Create a scratch document", "rgd n scratch.txt \"Scratch\""),
+            ("Create a Unicode-titled document", "rgd n notes.txt \"Field notes — 2026\""),
+            ("Create without verbose output", "rgd n minimal.txt \"Minimal\""),
+        ],
+        "add" => examples![
+            ("Append canonical index 900", "rgd a 900"),
+            ("Append index 901", "rgd a 901"),
+            ("Append a low numeric index", "rgd a 8"),
+            ("Append to an explicit document", "rgd a registry.txt 902"),
+            ("Resolve without auto-save", "rgd a 903 --no-save"),
+        ],
+        "rm" => examples![
+            ("Remove only index 900's fixed record", "rgd rm i900"),
+            ("Use a bare numeric index", "rgd rm 901"),
+            ("Use an explicit index spelling", "rgd rm index:902"),
+            ("Remove from an explicit document", "rgd rm registry.txt i903"),
+            ("Resolve without auto-save", "rgd rm i904 --no-save"),
+        ],
+        "summary" => examples![
+            ("Show the document summary", "rgd sm"),
+            ("Summarize an explicit document", "rgd sm registry.txt"),
+            ("Summarize after scanning", "rgd s && rgd sm"),
+            ("Summarize after a checkpoint check", "rgd ck && rgd sm"),
+            ("Add verbose diagnostics", "rgd sm --verbose"),
+        ],
+        "info" => examples![
+            ("Show every fixed record location", "rgd i"),
+            ("Inspect an explicit document", "rgd i registry.txt"),
+            ("Inspect after adding an index", "rgd a 900 && rgd i"),
+            ("Inspect before converting line ranges", "rgd i && rgd cv b 14 15"),
+            ("Add verbose diagnostics", "rgd i --verbose"),
+        ],
+        "encap" => examples![
+            ("Use store encapsulation", "rgd en \"value\" --mode d"),
+            ("Use search encapsulation", "rgd en \"value\" --mode b"),
+            ("Use delimiter encapsulation", "rgd en \"value\" --mode c"),
+            ("Extract an encapsulated value", "rgd en \"[\\\"value\\\"]\" --extract"),
+            ("Convert encapsulation mode", "rgd en \"[\\\"value\\\"]\" --to d"),
+        ],
+        "grab-html" => examples![
+            ("Extract numbered links", "rgd gh page.html href --tag a --numbered"),
+            ("Extract image sources", "rgd gh page.html src --tag img"),
+            ("Use delimiter encapsulation", "rgd gh page.html href --mode c"),
+            ("Emit set-variable names", "rgd gh page.html href --set link"),
+            ("Extract numbered media sources", "rgd gh page.html src --tag video --numbered"),
+        ],
+        "bool-and" => examples![
+            ("Require both patterns", "rgd ba i90 waterfront inspection"),
+            ("Require three patterns", "rgd ba i8 active buyer financing"),
+            ("Search the shared file explicitly", "rgd ba __all__ ready complete"),
+            ("Use quoted phrases", "rgd ba i90 \"closing date\" \"follow up\""),
+            ("Run against an explicit document", "rgd ba registry.txt i90 active approved"),
+        ],
+        "bool-nand" => examples![
+            ("Require active but reject archived", "rgd bn i90 active archived"),
+            ("Require buyer but reject seller", "rgd bn i8 buyer seller"),
+            ("Evaluate the shared file", "rgd bn __all__ ready blocked"),
+            ("Use quoted phrases", "rgd bn i90 \"closing date\" cancelled"),
+            ("Run against an explicit document", "rgd bn registry.txt i90 approved rejected"),
+        ],
+        "bool-or" => examples![
+            ("Accept either financing term", "rgd bo i90 cash financing"),
+            ("Accept one of three statuses", "rgd bo i8 ready pending complete"),
+            ("Evaluate the shared file", "rgd bo __all__ buyer seller"),
+            ("Use quoted phrases", "rgd bo i90 \"follow up\" \"closing date\""),
+            ("Run against an explicit document", "rgd bo registry.txt i90 approved reviewed"),
+        ],
+        "bool-xor" => examples![
+            ("Require exactly buyer or seller", "rgd bx i90 buyer seller"),
+            ("Require exactly ready or blocked", "rgd bx i8 ready blocked"),
+            ("Evaluate the shared file", "rgd bx __all__ active archived"),
+            ("Use quoted phrases", "rgd bx i90 \"cash offer\" financing"),
+            ("Run against an explicit document", "rgd bx registry.txt i90 approved rejected"),
+        ],
+        "count" => examples![
+            ("Count a phrase", "rgd ct i90 \"follow up\""),
+            ("Count a single term", "rgd ct i8 active"),
+            ("Count across the shared file", "rgd ct __all__ index"),
+            ("Count a command string", "rgd ct i90 \"rgd rg\""),
+            ("Count in an explicit document", "rgd ct registry.txt i90 ready"),
+        ],
+        "if-contains" => examples![
+            ("Return HOT or COLD", "rgd if i90 waterfront --then-val HOT --else-val COLD"),
+            ("Return numeric booleans", "rgd if i8 ready --then-val 1 --else-val 0"),
+            ("Check the shared file", "rgd if __all__ archived --then-val FOUND --else-val CLEAR"),
+            ("Check a quoted phrase", "rgd if i90 \"closing date\" --then-val DUE --else-val OPEN"),
+            ("Check an explicit document", "rgd if registry.txt i90 approved --then-val YES --else-val NO"),
+        ],
+        "wal" => examples![
+            ("Show WAL status", "rgd w"),
+            ("Show status for an explicit document", "rgd w registry.txt"),
+            ("Inspect after beginning a transaction", "rgd tx begin && rgd w"),
+            ("Inspect after rollback", "rgd tx rollback && rgd w"),
+            ("Add verbose diagnostics", "rgd w --verbose"),
+        ],
+        "wal-replay" => examples![
+            ("Preview WAL recovery", "rgd wr"),
+            ("Apply WAL recovery", "rgd wr --apply"),
+            ("Preview an explicit document", "rgd wr registry.txt"),
+            ("Apply to an explicit document", "rgd wr registry.txt --apply"),
+            ("Inspect status before replay", "rgd w && rgd wr"),
+        ],
+        "tx" => examples![
+            ("Begin a transaction", "rgd tx begin"),
+            ("Show transaction status", "rgd tx status"),
+            ("Commit a transaction", "rgd tx commit"),
+            ("Roll back a transaction", "rgd tx rollback"),
+            ("Use an explicit document", "rgd tx status registry.txt"),
+        ],
+        "schema" => examples![
+            ("Show schema status", "rgd sc"),
+            ("Validate against the current schema", "rgd sc --validate"),
+            ("Create a starter schema", "rgd sc --init"),
+            ("Validate an explicit document", "rgd sc registry.txt --validate"),
+            ("Initialize an explicit document schema", "rgd sc registry.txt --init"),
+        ],
+        "reg-types" => examples![
+            ("List supported typed values", "rgd rt"),
+            ("List before parsing a DWORD", "rgd rt && rgd rp 42 --reg-type REG_DWORD"),
+            ("List before parsing JSON", "rgd rt && rgd rp \"{\\\"ok\\\":true}\" --reg-type REG_JSON"),
+            ("List before parsing Boolean", "rgd rt && rgd rp true --reg-type REG_BOOL"),
+            ("List with verbose output", "rgd rt --verbose"),
+        ],
+        "reg-parse" => examples![
+            ("Parse a DWORD", "rgd rp 42 --reg-type REG_DWORD"),
+            ("Parse a QWORD", "rgd rp 4294967296 --reg-type REG_QWORD"),
+            ("Parse a Boolean", "rgd rp true --reg-type REG_BOOL"),
+            ("Parse JSON", "rgd rp \"{\\\"ok\\\":true}\" --reg-type REG_JSON"),
+            ("Parse a regular string", "rgd rp \"hello world\" --reg-type REG_SZ"),
+        ],
+        "clip-zone" => examples![
+            ("Copy zone zero", "rgd cz i90 0"),
+            ("Copy zone one", "rgd cz i90 1"),
+            ("Copy zone two", "rgd cz i8 2"),
+            ("Use an explicit document", "rgd cz registry.txt i90 0"),
+            ("Inspect before copying", "rgd zi i90 0 && rgd cz i90 0"),
+        ],
+        "clip-db" => examples![
+            ("Copy exact DB slot zero", "rgd cdb i90 0"),
+            ("Copy slot three", "rgd cdb i90 3"),
+            ("Copy slot eight", "rgd cdb i8 8"),
+            ("Use an explicit document", "rgd cdb registry.txt i90 0"),
+            ("Inspect before copying", "rgd db i90 && rgd cdb i90 3"),
+        ],
+        "clip-dbline" => examples![
+            ("Copy the complete DB line", "rgd cdbl i90"),
+            ("Copy index 8 DB line", "rgd cdbl i8"),
+            ("Use a bare index", "rgd cdbl 90"),
+            ("Use an explicit document", "rgd cdbl registry.txt i90"),
+            ("Inspect before copying", "rgd db i90 && rgd cdbl i90"),
+        ],
+        "clip-hexline" => examples![
+            ("Copy all three zone pairs", "rgd chl i90"),
+            ("Copy index 8's hex-word line", "rgd chl i8"),
+            ("Use a bare index", "rgd chl 90"),
+            ("Use an explicit document", "rgd chl registry.txt i90"),
+            ("Inspect before copying", "rgd hl i90 && rgd chl i90"),
+        ],
+        "clip-hexword" => examples![
+            ("Copy a code range", "rgd chw 14 15 --zone-type code"),
+            ("Copy a markdown range", "rgd chw 20 21 --zone-type markdown"),
+            ("Copy a media range", "rgd chw 30 32 --zone-type media"),
+            ("Copy a database range", "rgd chw 40 42 --zone-type database"),
+            ("Copy a single-line code range", "rgd chw 14 14 --zone-type code"),
+        ],
+        "serve" => examples![
+            ("Serve the loaded document read-only", "rgd sv --port 5000"),
+            ("Serve an explicit document", "rgd sv --file registry.txt --port 5001"),
+            ("Explicitly preserve read-only mode", "rgd sv --port 5002 --read-only true"),
+            ("Enable writable HTTP operations", "rgd sv --port 5003 --read-only false"),
+            ("Serve another explicit document", "rgd sv --file audit.txt --port 5004"),
+        ],
+        _ => examples![
+            ("Show command syntax", "rgd --help"),
+            ("Show PowerShell examples", "rgd --help --ex 1"),
+            ("Show Bash examples", "rgd --help --ex 2"),
+            ("Show Python examples", "rgd --help --ex 3"),
+            ("Show CMD examples", "rgd --help --ex 4"),
+        ],
+    }
+}
+
+fn render_command_example(raw: &str, shell: HelpShell) -> String {
+    if raw == "GATE" {
+        return match shell {
+            HelpShell::PowerShell => "if ((rgd rb i8db3 lte i90db4 --then-val 1 --else-val 0) -eq '1') { rgd rd i8z1 i90z1; rgd cv b 14 15 to i8 2 }".to_string(),
+            HelpShell::Bash => "if [ \"$(rgd rb i8db3 lte i90db4 --then-val 1 --else-val 0)\" = 1 ]; then rgd rd i8z1 i90z1 && rgd cv b 14 15 to i8 2; fi".to_string(),
+            HelpShell::Python => "import subprocess; ok=subprocess.check_output('rgd rb i8db3 lte i90db4 --then-val 1 --else-val 0', shell=True, text=True).strip()=='1'; ok and subprocess.run('rgd rd i8z1 i90z1 && rgd cv b 14 15 to i8 2', shell=True, check=True)".to_string(),
+            HelpShell::Cmd => "for /f \"delims=\" %R in ('rgd rb i8db3 lte i90db4 --then-val 1 --else-val 0') do @if \"%R\"==\"1\" (rgd rd i8z1 i90z1 & rgd cv b 14 15 to i8 2)".to_string(),
+        };
+    }
+    if raw == "CHECKPOINT" {
+        return match shell {
+            HelpShell::PowerShell => "rgd ck; if ($LASTEXITCODE -eq 0) { rgd cm --pull; if ($LASTEXITCODE -eq 0) { rgd pl } }".to_string(),
+            HelpShell::Bash => "rgd ck && rgd cm --pull && rgd pl".to_string(),
+            HelpShell::Python => "import subprocess; subprocess.run('rgd ck && rgd cm --pull && rgd pl', shell=True, check=True)".to_string(),
+            HelpShell::Cmd => "rgd ck && rgd cm --pull && rgd pl".to_string(),
+        };
+    }
+    if let Some((input, command)) = raw.strip_prefix("PIPE:").and_then(|value| value.split_once("|||")) {
+        return match shell {
+            HelpShell::PowerShell => format!("'{}' | {}", input.replace('\'', "''"), command),
+            HelpShell::Bash => format!("printf '%s\\n' '{}' | {}", input.replace('\'', "'\\''"), command),
+            HelpShell::Python => format!(
+                "import subprocess; subprocess.run({:?}, input={:?}, text=True, shell=True, check=True)",
+                command, input
+            ),
+            HelpShell::Cmd => format!("(echo {})|{}", input, command),
+        };
+    }
+    match shell {
+        HelpShell::Python => format!(
+            "import subprocess; subprocess.run({:?}, shell=True, check=True)",
+            raw
+        ),
+        _ => raw.to_string(),
+    }
+}
+
+fn print_command_examples(command_name: &str, short: &str, shell: HelpShell) {
+    println!("Examples for rgd {}", short);
+    println!("Active interactive shell: {}", shell.label());
+    println!("The loaded document is used whenever FILE is omitted.\n");
+    for (index, example) in command_examples(command_name).iter().enumerate() {
+        println!("{}. {}", index + 1, example.purpose);
+        println!("   {}", render_command_example(example.command, shell));
+    }
+}
+
+fn print_command_help(command_name: &str, short_mode: bool, example_shell: Option<HelpShell>) {
     let root = Cli::command();
     let Some(subcommand) = root.find_subcommand(command_name) else {
         clap::Error::raw(
@@ -1469,6 +2092,14 @@ fn print_command_help(command_name: &str, short_mode: bool) {
         .print_long_help()
         .unwrap_or_else(|error| clap::Error::raw(ErrorKind::Io, error.to_string()).exit());
     println!();
+    if let Some(shell) = example_shell {
+        print_command_examples(command_name, short, shell);
+    } else {
+        println!(
+            "Examples: rgd {} --help --ex [1|2|3|4]",
+            short
+        );
+    }
 }
 
 fn cmd_getutf(number: u32, decode: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
@@ -1822,7 +2453,7 @@ fn cmd_db(
 
     println!(
         "{} '{}' in {}",
-        "Database table for section".green().bold(),
+        "Database table for index".green().bold(),
         section.cyan(),
         file.display()
     );
@@ -1848,7 +2479,7 @@ fn cmd_ascii(
 
     println!(
         "{} '{}' in {}",
-        "Hex-word line for section".green().bold(),
+        "Hex-word line for index".green().bold(),
         section.cyan(),
         file.display()
     );
@@ -1942,19 +2573,20 @@ fn cmd_set_num(
     file: &PathBuf,
     section: &str,
     index: usize,
-    value: i64,
+    value: String,
     config: StoreConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut store = Store::open_with_config(file, config)?;
 
-    store.update_number(section, index, value)?;
+    let decimal = DecimalValue::parse(&value)?;
+    store.update_number(section, index, decimal)?;
 
     println!(
         "{} Updated '{}'.Num{} = {} in {}",
         "OK".green().bold(),
         section.cyan(),
         index,
-        value.to_string().yellow(),
+        value.yellow(),
         file.display()
     );
 
@@ -2026,7 +2658,7 @@ fn cmd_convert(values: &[String], zone_type: &str) -> Result<(), Box<dyn std::er
 fn cmd_types() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "{}",
-        "Zone Types (first hex nibble after 0x)".green().bold()
+        "Zone Types (first character before x)".green().bold()
     );
     println!();
     for zt in regedited::zone_type::ZoneType::ALL {
@@ -2045,7 +2677,7 @@ fn cmd_types() -> Result<(), Box<dyn std::error::Error>> {
     println!("  3x0000001 = Database, line 1");
     println!();
     println!("{}", "Usage:".dimmed());
-    println!("  regedited set-zone file.md Section 0 10 100 --zone-type code");
+    println!("  regedited set-zone file.md i64 0 10 100 --zone-type code");
     println!("  regedited convert 50 80 --zone-type media");
     Ok(())
 }
@@ -2060,14 +2692,12 @@ fn cmd_content(
     let content = store.get_section_content(section)?;
 
     println!(
-        "{} '{}' from {}",
-        "Content of section".green().bold(),
+        "{} {} from {}",
+        "Document visible from index".green().bold(),
         section.cyan(),
         file.display()
     );
-    println!("{}", "---".dimmed());
     println!("{}", content);
-    println!("{}", "---".dimmed());
 
     Ok(())
 }
@@ -2171,21 +2801,15 @@ fn cmd_info(file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
             .map(|index| index.to_string())
             .unwrap_or_else(|| "unresolved".to_string());
         println!("{}", format!("Index: {}", identity).cyan().bold());
-        if name != &format!("index:{}", identity) {
-            println!("  Legacy key: {}", name);
-        }
-        println!("  Header @ line {}", info.header_line);
+        let _ = name;
+        println!("  Marker @ line {}", info.header_line);
         println!("  Index @ line {}", info.header_line + 1);
         println!("  Hex-word line @ line {}", info.ascii_line);
         println!("  Numeric line @ line {}", info.numeric_line);
         println!("  String 1 @ line {}", info.string1_line);
         println!("  String 2 @ line {}", info.string2_line);
         println!("  String 3 @ line {}", info.string3_line);
-        println!("  Content separator @ line {}", info.separator_line);
-        println!(
-            "  Content: lines {}-{}",
-            info.content_start, info.content_end
-        );
+        println!("  Fixed record: 6 lines after marker");
         println!();
     }
 
@@ -2230,13 +2854,25 @@ fn cmd_scan(
         Some(ref val_str) => {
             let parts: Vec<&str> = val_str.split(':').collect();
             if parts.len() == 3 {
-                let idx = parts[0].parse::<usize>().unwrap_or(0);
-                let min = parts[1].parse::<i64>().unwrap_or(0);
-                let max = parts[2].parse::<i64>().unwrap_or(0);
+                let idx = parts[0].parse::<usize>().map_err(|_| {
+                    format!(
+                        "Invalid value filter '{}': DB slot must be an integer from 0 through 8",
+                        val_str
+                    )
+                })?;
+                if idx >= 9 {
+                    return Err(format!(
+                        "Invalid value filter '{}': DB slot {} is out of range (0-8)",
+                        val_str, idx
+                    )
+                    .into());
+                }
+                let min = DecimalValue::parse(parts[1])?;
+                let max = DecimalValue::parse(parts[2])?;
                 // Need owned vec for filter_by_value
                 let owned: Vec<regedited::fast_ops::ScannedSection> =
                     by_name.into_iter().cloned().collect();
-                let r = filter_by_value(&owned, idx, min, max);
+                let r = filter_by_value(&owned, idx, &min, &max);
                 println!(
                     "  Value filter [{}] {}-{}: {} matches",
                     idx,
@@ -2250,7 +2886,7 @@ fn cmd_scan(
                     if sec
                         .db_values
                         .get(idx)
-                        .is_some_and(|&v| v >= min && v <= max)
+                        .is_some_and(|v| v >= &min && v <= &max)
                     {
                         println!("{}", sec.display_compact());
                     }
@@ -2330,7 +2966,7 @@ fn cmd_fgrep(
 
     let matches = if let Some(sec) = section {
         println!(
-            "{} '{}' in section '{}' of {} (memory-mapped)",
+            "{} '{}' in {} after index validation in {} (memory-mapped)",
             "Fast grep:".green().bold(),
             pattern.cyan(),
             sec.cyan(),
@@ -2666,14 +3302,14 @@ fn cmd_index_zone_transfer(
     let source_header = scan_content(&source_content)?;
     let source_sec = source_header
         .get_section(&from_section)
-        .ok_or_else(|| format!("Resolved source section '{}' not found", from_section))?;
+        .ok_or_else(|| format!("Resolved source index key '{}' not found", from_section))?;
     let extracted = extract_zone_content(&source_content, source_sec, from_zone)?;
 
     let target_content = std::fs::read_to_string(to_file)?;
     let target_header = scan_content(&target_content)?;
     let target_sec = target_header
         .get_section(&to_section)
-        .ok_or_else(|| format!("Resolved target section '{}' not found", to_section))?;
+        .ok_or_else(|| format!("Resolved target index key '{}' not found", to_section))?;
     let result = replace_zone_content(&target_content, target_sec, to_zone, &extracted)?;
     write_file_with_undo(to_file, result)?;
 
@@ -2881,7 +3517,7 @@ struct NativeStateSection {
     name: String,
     #[serde(rename = "hex_word_line", alias = "ascii")]
     ascii: String,
-    db_values: [i64; 9],
+    db_values: [DecimalValue; 9],
     strings: [String; 3],
     zones: Vec<NativeStateZone>,
 }
@@ -3148,7 +3784,10 @@ fn append_or_replace(existing: String, incoming: String, append: bool) -> String
     }
 }
 
-fn parse_i64_value(value: &str, context: &str) -> Result<i64, Box<dyn std::error::Error>> {
+fn parse_decimal_value(
+    value: &str,
+    context: &str,
+) -> Result<DecimalValue, Box<dyn std::error::Error>> {
     let trimmed = value.trim();
     if trimmed.lines().count() > 1 {
         return Err(format!(
@@ -3157,12 +3796,9 @@ fn parse_i64_value(value: &str, context: &str) -> Result<i64, Box<dyn std::error
         )
         .into());
     }
-    Ok(trimmed.parse::<i64>().map_err(|e| {
-        format!(
-            "{} must be one regular integer number, got '{}': {}",
-            context, trimmed, e
-        )
-    })?)
+    DecimalValue::parse(trimmed).map_err(|error| {
+        format!("{} must be one exact decimal, got '{}': {}", context, trimmed, error).into()
+    })
 }
 
 fn set_ref_value(
@@ -3196,7 +3832,7 @@ fn set_ref_value(
             slot,
         } => {
             let section = resolve_section_name_by_index(file, *registry_index)?;
-            let incoming = parse_i64_value(value, "DB value")?;
+            let incoming = parse_decimal_value(value, "DB value")?;
             let mut store = Store::open_with_config(file, StoreConfig::default())?;
             store.update_number(&section, *slot, incoming)?;
             Ok(())
@@ -3232,7 +3868,7 @@ fn set_ref_value(
             let header = scan_content(&content)?;
             let sec = header
                 .get_section(&section)
-                .ok_or_else(|| format!("Resolved section '{}' not found", section))?;
+                .ok_or_else(|| format!("Resolved index key '{}' not found", section))?;
             let result =
                 regedited::zone_editor::replace_zone_content(&content, sec, *zone, &replacement)?;
             write_file_with_undo(file, result)?;
@@ -3488,15 +4124,26 @@ fn cmd_ref_bool(
         "contains" => left_value
             .to_lowercase()
             .contains(&right_value.to_lowercase()),
-        "eq" | "==" | "=" => left_value == right_value,
-        "ne" | "!=" => left_value != right_value,
+        "eq" | "==" | "=" => match (
+            DecimalValue::parse(left_value.trim()),
+            DecimalValue::parse(right_value.trim()),
+        ) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => left_value == right_value,
+        },
+        "ne" | "!=" => match (
+            DecimalValue::parse(left_value.trim()),
+            DecimalValue::parse(right_value.trim()),
+        ) {
+            (Ok(left), Ok(right)) => left != right,
+            _ => left_value != right_value,
+        },
         "gt" | ">" | "gte" | ">=" | "lt" | "<" | "lte" | "<=" => {
-            let left_num = left_value
-                .trim()
-                .parse::<f64>()
-                .map_err(|e| format!("Left value '{}' is not numeric: {}", left_value.trim(), e))?;
-            let right_num = right_value.trim().parse::<f64>().map_err(|e| {
-                format!("Right value '{}' is not numeric: {}", right_value.trim(), e)
+            let left_num = DecimalValue::parse(left_value.trim()).map_err(|error| {
+                format!("Left value '{}' is not numeric: {}", left_value.trim(), error)
+            })?;
+            let right_num = DecimalValue::parse(right_value.trim()).map_err(|error| {
+                format!("Right value '{}' is not numeric: {}", right_value.trim(), error)
             })?;
             match op_normalized.as_str() {
                 "gt" | ">" => left_num > right_num,
@@ -3985,7 +4632,9 @@ fn cmd_grab_html(
 
 // ==================== BOOLEAN OPERATION COMMANDS ====================
 
-/// Get content for boolean operations (section or full file)
+/// Get document content for boolean operations.
+///
+/// An index argument validates context but does not create a content boundary.
 fn get_bool_content(file: &PathBuf, section: &str) -> Result<String, Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(file)?;
 
@@ -3993,14 +4642,8 @@ fn get_bool_content(file: &PathBuf, section: &str) -> Result<String, Box<dyn std
         Ok(content)
     } else {
         let header = scan_content(&content)?;
-        let sec = header.resolve_section(section)?;
-
-        // Extract section content
-        let lines: Vec<&str> = content.lines().collect();
-        let start = sec.content_start;
-        let end = sec.content_end.min(lines.len());
-        let section_lines = &lines[start..end];
-        Ok(section_lines.join("\n"))
+        header.resolve_section(section)?;
+        Ok(content)
     }
 }
 
@@ -4215,41 +4858,24 @@ fn cmd_wal_replay(file: &PathBuf, apply: bool) -> Result<(), Box<dyn std::error:
 // ==================== TRANSACTION COMMANDS ====================
 
 fn cmd_tx(action: &str, file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    use regedited::transaction::{Transaction, TransactionManager};
+    use regedited::wal::{Wal, WalStatus};
 
     match action.to_lowercase().as_str() {
         "begin" | "start" => {
-            let mut mgr = TransactionManager::new();
-            match mgr.begin(file) {
-                Ok(tx) => {
-                    println!(
-                        "{} Transaction begun for {}",
-                        "TX:".green().bold(),
-                        file.display()
-                    );
-                    println!("  State: {:?}", tx.state());
-                    println!("  Use 'tx commit' or 'tx rollback' to finish");
-                }
-                Err(e) => {
-                    // Transaction may already exist — show status
-                    println!("{} {}", "Note:".yellow(), e);
-                    if let Ok(tx) = Transaction::begin(file) {
-                        println!("  Current state: {} staged ops", tx.len());
-                    }
-                }
-            }
+            let mut wal = Wal::open(file)?;
+            wal.begin_session()?;
+            println!(
+                "{} Transaction begun for {}",
+                "TX:".green().bold(),
+                file.display()
+            );
+            println!("  State: Started");
+            println!("  Use 'tx commit' or 'tx rollback' to finish");
         }
         "commit" => {
-            // Try to load existing transaction
-            if let Ok(tx) = Transaction::begin(file) {
-                println!(
-                    "{} Committing {} operations...",
-                    "TX:".green().bold(),
-                    tx.len()
-                );
-                // Transaction already has WAL entries — just commit marker
-                drop(tx);
-                let mut wal = regedited::wal::Wal::open(file)?;
+            let status = WalStatus::check(file)?;
+            if status.has_wal && !status.is_committed {
+                let mut wal = Wal::open(file)?;
                 wal.commit()?;
                 println!("{} Transaction committed", "OK:".green().bold());
             } else {
@@ -4261,14 +4887,9 @@ fn cmd_tx(action: &str, file: &PathBuf) -> Result<(), Box<dyn std::error::Error>
             }
         }
         "rollback" | "abort" => {
-            if let Ok(tx) = Transaction::begin(file) {
-                println!(
-                    "{} Rolling back {} operations...",
-                    "TX:".yellow().bold(),
-                    tx.len()
-                );
-                drop(tx);
-                let mut wal = regedited::wal::Wal::open(file)?;
+            let status = WalStatus::check(file)?;
+            if status.has_wal && !status.is_committed {
+                let mut wal = Wal::open(file)?;
                 wal.rollback()?;
                 println!("{} Transaction rolled back", "OK:".green().bold());
             } else {
@@ -4280,15 +4901,7 @@ fn cmd_tx(action: &str, file: &PathBuf) -> Result<(), Box<dyn std::error::Error>
             }
         }
         "status" | "st" => {
-            if let Ok(tx) = Transaction::begin(file) {
-                println!("{}", tx.summary());
-            } else {
-                println!(
-                    "{} No active transaction for {}",
-                    "Note:".yellow(),
-                    file.display()
-                );
-            }
+            println!("{}", WalStatus::check(file)?.display());
         }
         _ => {
             return Err(format!(
@@ -4323,13 +4936,18 @@ fn cmd_schema(
                 .map(|index| index.to_string())
                 .unwrap_or_else(|| info.name.clone());
             let sec = schema.section(&index_ref);
-            // Add default fields
-            sec.add_field(regedited::schema::SchemaField::new(
-                "description",
-                regedited::schema::SchemaFieldType::String,
-            ));
-            sec.fields.get_mut("description").unwrap().constraint =
-                regedited::schema::FieldConstraint::Optional;
+            for slot in 0..9 {
+                sec.add_field(regedited::schema::SchemaField::new(
+                    &format!("num_{}", slot),
+                    regedited::schema::SchemaFieldType::Decimal,
+                ));
+            }
+            for slot in 0..3 {
+                sec.add_field(regedited::schema::SchemaField::new(
+                    &format!("str_{}", slot),
+                    regedited::schema::SchemaFieldType::String,
+                ));
+            }
         }
 
         let schema_path = DocumentSchema::schema_path(file);
@@ -4385,6 +5003,12 @@ fn cmd_schema(
                 // Extract strings
                 if info.string1_line < lines.len() {
                     values.insert("str_0".to_string(), lines[info.string1_line].to_string());
+                }
+                if info.string2_line < lines.len() {
+                    values.insert("str_1".to_string(), lines[info.string2_line].to_string());
+                }
+                if info.string3_line < lines.len() {
+                    values.insert("str_2".to_string(), lines[info.string3_line].to_string());
                 }
 
                 let errors = sec_schema.validate(&values);
@@ -4485,14 +5109,14 @@ fn cmd_serve(file: &Path, port: u16, read_only: bool) -> Result<(), Box<dyn std:
     println!("  Read-only: {}", read_only);
     println!();
     println!("  Endpoints:");
-    println!("    GET  /              — Status + section list");
+    println!("    GET  /              — Status + index list");
     println!("    GET  /sections      — All indexes (legacy route name)");
-    println!("    GET  /section/{{name}}     — Section metadata");
-    println!("    GET  /section/{{name}}/db  — Database table");
-    println!("    GET  /section/{{name}}/hexline — Hex-word line");
-    println!("    GET  /section/{{name}}/ascii — Legacy alias for /hexline");
-    println!("    GET  /section/{{name}}/zone/{{i}} — Zone content");
-    println!("    GET  /grep?pattern= &section= — Search");
+    println!("    GET  /section/{{index}}     — Fixed-record metadata (legacy route name)");
+    println!("    GET  /section/{{index}}/db  — Database table");
+    println!("    GET  /section/{{index}}/hexline — Hex-word line");
+    println!("    GET  /section/{{index}}/ascii — Legacy alias for /hexline");
+    println!("    GET  /section/{{index}}/zone/{{i}} — Absolute zone content");
+    println!("    GET  /grep?pattern= &index= — Validate index and search shared text");
     println!("    GET  /types         — Zone types");
     println!("    GET  /wal           — WAL status");
     println!("    GET  /health        — Health check");

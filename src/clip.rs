@@ -16,7 +16,7 @@
 //!
 //! ```bash
 //! # Copy zone string to clipboard
-//! regedited clip myfile.md MySection 2
+//! regedited clip myfile.md i64 2
 //!
 //! # The string is now in the system clipboard, ready to paste
 //! ```
@@ -112,13 +112,13 @@ pub fn get_from_clipboard() -> Result<String> {
 /// Copy a zone's associated string to clipboard
 ///
 /// This is the primary function for the `regedited clip` command.
-/// It copies the string at the given index from a section's database line.
+/// It copies the requested string slot from an index record.
 ///
 /// # Arguments
-/// * `section_name` - Name of the section
+/// * `section_name` - Compatibility parameter containing the index key
 /// * `string_index` - Which string to copy (0-2)
 /// * `content` - The file content
-/// * `section` - The section info
+/// * `section` - Compatibility parameter containing index-record metadata
 pub fn copy_zone_string(
     _section_name: &str,
     string_index: usize,
@@ -240,7 +240,7 @@ pub fn clip_hexword_range(
 ///
 /// # Example
 /// ```bash
-/// regedited clip-zone myfile.md MySection 1
+/// regedited clip-zone myfile.md i64 1
 /// # → Copies zone 1 content to clipboard
 /// ```
 pub fn clip_zone_content(
@@ -266,7 +266,7 @@ pub fn clip_zone_content(
 ///
 /// # Example
 /// ```bash
-/// regedited clip-db myfile.md MySection 0
+/// regedited clip-db myfile.md i64 0
 /// # → Copies numeric value at index 0 to clipboard
 /// ```
 pub fn clip_db_value(
@@ -303,7 +303,7 @@ pub fn clip_db_value(
 ///
 /// # Example
 /// ```bash
-/// regedited clip-dbline myfile.md MySection
+/// regedited clip-dbline myfile.md i64
 /// # → Copies "42 | 7 | 3 | 256 | ..." to clipboard
 /// ```
 pub fn clip_db_line(content: &str, section: &crate::header::SectionInfo) -> Result<String> {
@@ -324,7 +324,7 @@ pub fn clip_db_line(content: &str, section: &crate::header::SectionInfo) -> Resu
 ///
 /// # Example
 /// ```bash
-/// regedited clip-ascii myfile.md MySection
+/// regedited clip-ascii myfile.md i64
 /// # → Copies "0x0000000 : 1x000003C : ..." to clipboard
 /// ```
 pub fn clip_ascii_store(content: &str, section: &crate::header::SectionInfo) -> Result<String> {

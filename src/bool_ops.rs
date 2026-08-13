@@ -14,28 +14,26 @@
 //! find /I "contains" file >nul || find /I "must" file >nul && echo TRUE || echo FALSE
 //! ```
 //!
-//! Regedited provides the same boolean logic on content blocks, sections, and files.
+//! Regedited provides the same boolean logic on the shared file after optional
+//! numeric-index validation.
 //!
 //! ## Usage
 //!
 //! ```bash
-//! # If section contains pattern, then extract zone
-//! regedited if-contains doc.md MySection "pattern" --then-exec "regedited zone-extract doc.md MySection 1"
+//! # Validate index 64, then test the shared document
+//! regedited if-contains doc.md i64 "pattern" --then-val FOUND --else-val MISSING
 //!
-//! # Boolean AND: section must contain BOTH patterns
-//! regedited bool-and doc.md MySection "rust" "fn"
+//! # Boolean AND: the shared document must contain BOTH patterns
+//! regedited bool-and doc.md i64 "rust" "fn"
 //!
 //! # Boolean NAND: contains first but NOT second
-//! regedited bool-nand doc.md MySection "fn" "python"
+//! regedited bool-nand doc.md i64 "fn" "python"
 //!
 //! # Boolean OR: contains ANY of the patterns
-//! regedited bool-or doc.md MySection "rust" "python" "go"
+//! regedited bool-or doc.md i64 "rust" "python" "go"
 //!
 //! # Count occurrences of pattern
-//! regedited count doc.md MySection "fn"
-//!
-//! # Check if zone is empty
-//! regedited is-empty doc.md MySection 1
+//! regedited count doc.md i64 "fn"
 //! ```
 
 /// Boolean result with context
@@ -76,8 +74,8 @@ impl BoolResult {
 /// Boolean AND: content must contain ALL patterns
 ///
 /// ```bash
-/// regedited bool-and doc.md MySection "rust" "fn" "main"
-/// # TRUE | Section 'MySection' contains ALL 3 patterns | matches=5
+/// regedited bool-and doc.md i64 "rust" "fn" "main"
+/// # TRUE | Shared document contains ALL 3 patterns | matches=5
 /// ```
 pub fn bool_and(content: &str, patterns: &[String]) -> BoolResult {
     let lines: Vec<&str> = content.lines().collect();
@@ -105,7 +103,7 @@ pub fn bool_and(content: &str, patterns: &[String]) -> BoolResult {
     all_matches.dedup_by(|a, b| a.0 == b.0);
 
     let desc = format!(
-        "Section contains ALL {} pattern(s): {}",
+        "Shared document contains ALL {} pattern(s): {}",
         patterns.len(),
         patterns.join(", ")
     );
@@ -121,8 +119,8 @@ pub fn bool_and(content: &str, patterns: &[String]) -> BoolResult {
 /// Boolean NAND: contains first pattern but NOT second
 ///
 /// ```bash
-/// regedited bool-nand doc.md MySection "fn" "python"
-/// # TRUE | Section contains 'fn' but NOT 'python' | matches=3
+/// regedited bool-nand doc.md i64 "fn" "python"
+/// # TRUE | Shared document contains 'fn' but NOT 'python' | matches=3
 /// ```
 pub fn bool_nand(content: &str, must_contain: &str, must_not: &str) -> BoolResult {
     let lines: Vec<&str> = content.lines().collect();
@@ -144,7 +142,10 @@ pub fn bool_nand(content: &str, must_contain: &str, must_not: &str) -> BoolResul
 
     BoolResult {
         value: result,
-        description: format!("Section contains '{}' but NOT '{}'", must_contain, must_not),
+        description: format!(
+            "Shared document contains '{}' but NOT '{}'",
+            must_contain, must_not
+        ),
         matches,
         lines_checked: lines.len(),
     }
@@ -153,8 +154,8 @@ pub fn bool_nand(content: &str, must_contain: &str, must_not: &str) -> BoolResul
 /// Boolean OR: content contains ANY of the patterns
 ///
 /// ```bash
-/// regedited bool-or doc.md MySection "rust" "python" "go"
-/// # TRUE | Section contains ANY of 3 patterns | matches=5
+/// regedited bool-or doc.md i64 "rust" "python" "go"
+/// # TRUE | Shared document contains ANY of 3 patterns | matches=5
 /// ```
 pub fn bool_or(content: &str, patterns: &[String]) -> BoolResult {
     let lines: Vec<&str> = content.lines().collect();
@@ -178,7 +179,7 @@ pub fn bool_or(content: &str, patterns: &[String]) -> BoolResult {
     BoolResult {
         value: !all_matches.is_empty(),
         description: format!(
-            "Section contains ANY of {} pattern(s): {}",
+            "Shared document contains ANY of {} pattern(s): {}",
             patterns.len(),
             patterns.join(", ")
         ),
@@ -213,7 +214,7 @@ pub fn bool_xor(content: &str, pattern_a: &str, pattern_b: &str) -> BoolResult {
     BoolResult {
         value: result,
         description: format!(
-            "Section contains EXACTLY ONE of '{}' or '{}'",
+            "Shared document contains EXACTLY ONE of '{}' or '{}'",
             pattern_a, pattern_b
         ),
         matches,
@@ -224,7 +225,7 @@ pub fn bool_xor(content: &str, pattern_a: &str, pattern_b: &str) -> BoolResult {
 /// Count occurrences of a pattern
 ///
 /// ```bash
-/// regedited count doc.md MySection "fn"
+/// regedited count doc.md i64 "fn"
 /// # //! # 3 | Pattern 'fn' found 3 times across 45 lines
 /// ```
 pub fn count(content: &str, pattern: &str) -> (usize, Vec<(usize, String)>) {
@@ -261,7 +262,7 @@ pub fn is_zone_empty(content: &str) -> BoolResult {
 /// If-contains-then: if content contains pattern, return then_val, else return else_val
 ///
 /// ```bash
-/// regedited if-contains doc.md MySection "fn" --then "HAS_CODE" --else "NO_CODE"
+/// regedited if-contains doc.md i64 "fn" --then-val "HAS_CODE" --else-val "NO_CODE"
 /// # HAS_CODE
 /// ```
 pub fn if_contains(content: &str, pattern: &str, then_val: &str, else_val: &str) -> String {

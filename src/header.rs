@@ -1,38 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0
 //! # Header Parser
 //!
-//! Scans files for canonical `regedited open` triggers and compatible
-//! `## SECTION:` headers, then builds an index of section locations.
-//! This enables O(1) jumps to any section without parsing the entire file.
+//! Scans files for canonical `regedited open` triggers and builds an index of
+//! their fixed six-line records. The trigger is an exact lowercase substring
+//! and may have arbitrary text before or after it.
 //!
-//! ## Section Format (v3 — Obsidian-friendly with pipe separators)
+//! ## Index Format
 //!
 //! ```markdown
-//! <!-- anything before regedited open anything after is ignored -->
+//! anything before regedited open anything after
 //! index: 12345
 //! 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 //! 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 //! First string line, generic oneliner
 //! Second string line, generic oneliner
 //! Third string line, generic oneliner
-//! ---
-//! ... content ...
 //! ```
 
 use crate::{MmapFile, RegeditedError, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// The prefix that marks a section header
-pub const SECTION_PREFIX: &str = "## SECTION:";
-
-/// The separator that marks end of section metadata / start of content
-pub const CONTENT_SEPARATOR: &str = "---";
-
-/// Information about a section's location in the file
+/// Information about one index record's location in the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionInfo {
-    /// Section key (`index:<n>` for canonical triggers, section name for legacy `## SECTION:`)
+    /// Canonical layout key (`index:<n>`).
     pub name: String,
     /// Numeric identity read from the following `index:` line
     pub registry_index: Option<u64>,
@@ -50,12 +42,6 @@ pub struct SectionInfo {
     pub string2_line: usize,
     /// Line number of string 3 (header_line + 6)
     pub string3_line: usize,
-    /// Line number of the content separator "---" (header_line + 7)
-    pub separator_line: usize,
-    /// Line number where content starts (separator_line + 1)
-    pub content_start: usize,
-    /// Line number where content ends (start of next section - 1, or EOF)
-    pub content_end: usize,
     /// Byte offset of the header line start
     pub header_byte_offset: usize,
 }
@@ -67,7 +53,6 @@ impl SectionInfo {
         registry_index: Option<u64>,
         header_line: usize,
         header_byte_offset: usize,
-        content_end: usize,
     ) -> Self {
         Self {
             name,
@@ -79,9 +64,6 @@ impl SectionInfo {
             string1_line: header_line + 4,
             string2_line: header_line + 5,
             string3_line: header_line + 6,
-            separator_line: header_line + 7,
-            content_start: header_line + 8,
-            content_end,
             header_byte_offset,
         }
     }
@@ -92,15 +74,9 @@ impl SectionInfo {
         (self.index_line, self.string3_line)
     }
 
-    /// Get the content lines
-    /// Returns (start_line, end_line) inclusive
-    pub fn content_range(&self) -> (usize, usize) {
-        (self.content_start, self.content_end)
-    }
-
-    /// Get the total number of lines in this section
+    /// Get the marker plus six structured record lines.
     pub fn total_lines(&self) -> usize {
-        self.content_end.saturating_sub(self.header_line) + 1
+        7
     }
 
     /// Canonical identity for display and diagnostics.
@@ -113,17 +89,16 @@ impl SectionInfo {
     /// Format for display
     pub fn display(&self) -> String {
         format!(
-            "  {0} (header @ line {1}, content lines {2}-{3}, {4} lines total)",
+            "  {0} (marker @ line {1}, record lines {2}-{3})",
             self.index_label(),
             self.header_line,
-            self.content_start,
-            self.content_end,
-            self.total_lines()
+            self.index_line,
+            self.string3_line,
         )
     }
 }
 
-/// Document header containing all sections
+/// Document header containing all discovered index records.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentHeader {
     /// Ordered map of internal layout key -> index info
@@ -144,13 +119,25 @@ impl DocumentHeader {
         }
     }
 
-    /// Find a section by name (exact match)
-    pub fn get_section(&self, name: &str) -> Option<&SectionInfo> {
-        self.sections.get(name)
+    /// Find an index by canonical key or compact numeric reference.
+    pub fn get_section(&self, reference: &str) -> Option<&SectionInfo> {
+        if let Some(index) = parse_index_reference(reference) {
+            return self
+                .sections
+                .values()
+                .find(|entry| entry.registry_index == Some(index));
+        }
+        self.sections.get(reference)
     }
 
-    /// Find a section by name (case-insensitive)
+    /// Compatibility lookup for canonical index keys, case-insensitively.
     pub fn get_section_case_insensitive(&self, name: &str) -> Option<&SectionInfo> {
+        if let Some(index) = parse_index_reference(name) {
+            return self
+                .sections
+                .values()
+                .find(|entry| entry.registry_index == Some(index));
+        }
         let lower = name.to_lowercase();
         self.sections
             .iter()
@@ -158,7 +145,7 @@ impl DocumentHeader {
             .map(|(_, v)| v)
     }
 
-    /// Resolve a canonical numeric index reference, with legacy names as fallback.
+    /// Resolve a canonical numeric index reference, then an internal layout key.
     pub fn resolve_section(&self, reference: &str) -> Result<&SectionInfo> {
         if let Some(index) = parse_index_reference(reference) {
             let mut matches = self
@@ -181,12 +168,12 @@ impl DocumentHeader {
             .ok_or_else(|| RegeditedError::SectionNotFound(reference.to_string()))
     }
 
-    /// List all internal layout keys (legacy compatibility API)
+    /// List all internal layout keys (the public method name is retained for API compatibility).
     pub fn section_names(&self) -> Vec<&str> {
         self.sections.keys().map(|s| s.as_str()).collect()
     }
 
-    /// Get number of sections
+    /// Get number of index records.
     pub fn section_count(&self) -> usize {
         self.sections.len()
     }
@@ -204,10 +191,11 @@ impl DocumentHeader {
         ];
         for info in self.sections.values() {
             lines.push(format!(
-                "  {0}: lines {1}-{2}",
+                "  {0}: marker {1}, record {2}-{3}",
                 info.index_label(),
                 info.header_line,
-                info.content_end
+                info.index_line,
+                info.string3_line,
             ));
         }
         lines.join("\n")
@@ -223,8 +211,8 @@ impl Default for DocumentHeader {
 /// Scan a file and build the document header index
 ///
 /// This parses the file line-by-line to find canonical `regedited open`
-/// triggers and compatible `## SECTION:` headers. For large files, this is
-/// done using memory-mapped I/O with fast byte scanning.
+/// triggers. For large files, this is done using memory-mapped I/O with fast
+/// byte scanning.
 pub fn scan_file<P: AsRef<Path>>(path: P) -> Result<DocumentHeader> {
     let mmap = MmapFile::open(path)?;
     let content = mmap.as_str();
@@ -233,64 +221,26 @@ pub fn scan_file<P: AsRef<Path>>(path: P) -> Result<DocumentHeader> {
 
 /// Scan content string and build document header index
 ///
-/// Finds canonical "regedited open" triggers that can appear anywhere in a
-/// line, plus compatible `## SECTION: Name` headers. Canonical triggers do not
-/// parse names from the trigger line; the following `index:` line is the
-/// identity. This allows Regedited indexes to be embedded in any file format
-/// (HTML, JS, CSS, etc.).
+/// Finds exact lowercase `regedited open` substrings anywhere in a line. Text
+/// around the substring is ignored. The immediately following `index:` line
+/// supplies the numeric identity; the remaining five record lines have fixed
+/// positions after it.
 pub fn scan_content(content: &str) -> Result<DocumentHeader> {
     let total_bytes = content.len();
     let mut sections: BTreeMap<String, SectionInfo> = BTreeMap::new();
-    let mut current_header: Option<(String, Option<u64>, usize, usize)> = None;
-    let mut trigger_counter: u64 = 0;
     let mut total_lines = 0usize;
     let mut byte_offset = 0usize;
 
     for raw_line in content.split_inclusive('\n') {
         let line_num = total_lines;
         let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-        let mut matched = false;
-
-        if let Some((_, registry_index, header_line, _)) = &mut current_header {
-            if line_num == *header_line + 1 {
-                *registry_index = parse_registry_index_line(line);
-            }
-        }
-
-        // Check for compatible ## SECTION: header.
-        if let Some(name) = parse_section_header(line) {
-            matched = true;
-            if let Some((prev_name, prev_index, prev_line, prev_byte)) = current_header.take() {
-                let info = SectionInfo::new(
-                    prev_name,
-                    prev_index,
-                    prev_line,
-                    prev_byte,
-                    line_num.saturating_sub(1),
-                );
-                insert_index(&mut sections, info)?;
-            }
-            current_header = Some((name, None, line_num, byte_offset));
-        }
-
-        // Check for literal "regedited open" trigger (can appear ANYWHERE in a line).
-        if !matched && contains_regedited_open_trigger(line) {
-            let section_name = canonical_trigger_section_key(
-                content,
-                byte_offset + raw_line.len(),
-                &mut trigger_counter,
-            );
-            if let Some((prev_name, prev_index, prev_line, prev_byte)) = current_header.take() {
-                let info = SectionInfo::new(
-                    prev_name,
-                    prev_index,
-                    prev_line,
-                    prev_byte,
-                    line_num.saturating_sub(1),
-                );
-                insert_index(&mut sections, info)?;
-            }
-            current_header = Some((section_name, None, line_num, byte_offset));
+        if contains_regedited_open_trigger(line) {
+            let (section_name, registry_index) =
+                canonical_trigger_identity(content, byte_offset + raw_line.len(), line_num)?;
+            insert_index(
+                &mut sections,
+                SectionInfo::new(section_name, registry_index, line_num, byte_offset),
+            )?;
         }
 
         total_lines += 1;
@@ -299,18 +249,6 @@ pub fn scan_content(content: &str) -> Result<DocumentHeader> {
 
     if content.is_empty() {
         total_lines = 1;
-    }
-
-    // Finalize the last section
-    if let Some((name, registry_index, line, byte_offset)) = current_header {
-        let info = SectionInfo::new(
-            name,
-            registry_index,
-            line,
-            byte_offset,
-            total_lines.saturating_sub(1),
-        );
-        insert_index(&mut sections, info)?;
     }
 
     Ok(DocumentHeader {
@@ -342,26 +280,19 @@ fn insert_index(indexes: &mut BTreeMap<String, SectionInfo>, info: SectionInfo) 
     Ok(())
 }
 
-/// Quick scan that finds section names and their header line numbers
-///
-/// Finds canonical "regedited open" triggers and compatible `## SECTION: Name` headers.
-/// This is useful for listing sections without full parsing.
+/// Quick scan that finds canonical index keys and their marker line numbers.
 pub fn quick_scan_names(content: &str) -> Vec<(String, usize)> {
     let mut result = Vec::new();
-    let mut trigger_counter: u64 = 0;
     let mut byte_offset = 0usize;
 
     for (line_num, raw_line) in content.split_inclusive('\n').enumerate() {
         let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-        if let Some(name) = parse_section_header(line) {
-            result.push((name, line_num));
-        } else if contains_regedited_open_trigger(line) {
-            let section_key = canonical_trigger_section_key(
-                content,
-                byte_offset + raw_line.len(),
-                &mut trigger_counter,
-            );
-            result.push((section_key, line_num));
+        if contains_regedited_open_trigger(line) {
+            if let Ok((section_key, _)) =
+                canonical_trigger_identity(content, byte_offset + raw_line.len(), line_num)
+            {
+                result.push((section_key, line_num));
+            }
         }
 
         byte_offset += raw_line.len();
@@ -381,19 +312,36 @@ fn contains_regedited_open_trigger(line: &str) -> bool {
         .any(|window| window == b"regedited open")
 }
 
-fn canonical_trigger_section_key(
+fn canonical_trigger_identity(
     content: &str,
     next_line_byte_offset: usize,
-    fallback_counter: &mut u64,
-) -> String {
-    if let Some(index_line) = line_at_or_after(content, next_line_byte_offset) {
-        if let Some(index) = parse_registry_index_line(index_line) {
-            return format!("index:{}", index);
-        }
+    marker_line: usize,
+) -> Result<(String, Option<u64>)> {
+    let remaining = content.get(next_line_byte_offset..).ok_or_else(|| {
+        RegeditedError::HeaderCorruption(format!(
+            "Index marker at line {} is not followed by six record lines",
+            marker_line
+        ))
+    })?;
+    if remaining.split('\n').take(6).count() != 6 {
+        return Err(RegeditedError::HeaderCorruption(format!(
+            "Index marker at line {} is not followed by six record lines",
+            marker_line
+        )));
     }
-
-    *fallback_counter += 1;
-    format!("index:unresolved-{}", *fallback_counter)
+    let index_line = line_at_or_after(content, next_line_byte_offset).ok_or_else(|| {
+        RegeditedError::HeaderCorruption(format!(
+            "Index marker at line {} has no index line",
+            marker_line
+        ))
+    })?;
+    let index = parse_registry_index_line(index_line).ok_or_else(|| {
+        RegeditedError::HeaderCorruption(format!(
+            "Index marker at line {} must be followed by 'index: N'",
+            marker_line
+        ))
+    })?;
+    Ok((format!("index:{}", index), Some(index)))
 }
 
 fn line_at_or_after(content: &str, byte_offset: usize) -> Option<&str> {
@@ -440,24 +388,9 @@ pub fn parse_index_reference(reference: &str) -> Option<u64> {
     }
 }
 
-/// Parse a section header line
+/// Extract one index record's six structured lines from content.
 ///
-/// Returns `Some(name)` if the line is a `## SECTION: Name` header
-/// Returns `None` otherwise
-fn parse_section_header(line: &str) -> Option<String> {
-    let trimmed = line.trim_start();
-    if let Some(rest) = trimmed.strip_prefix(SECTION_PREFIX) {
-        let name = rest.trim();
-        if !name.is_empty() {
-            return Some(name.to_string());
-        }
-    }
-    None
-}
-
-/// Extract a specific section's data block from content
-///
-/// Returns the 5 data lines (Hex-word line + numeric line + 3 strings)
+/// Returns all 6 record lines (index + hex-word + numeric + 3 strings).
 pub fn extract_section_data(content: &str, section: &SectionInfo) -> Result<String> {
     let lines: Vec<&str> = content.lines().collect();
 
@@ -473,21 +406,23 @@ pub fn extract_section_data(content: &str, section: &SectionInfo) -> Result<Stri
     Ok(data_lines.join("\n"))
 }
 
-/// Extract a section's content (markdown between --- and next section)
+/// Return the document visible from a resolved index.
+///
+/// Index records do not own surrounding content. This compatibility helper
+/// verifies that the fixed record exists, then returns the complete UTF-8
+/// document. Callers that need a bounded payload should resolve a zone.
 pub fn extract_section_content(content: &str, section: &SectionInfo) -> Result<String> {
     let lines: Vec<&str> = content.lines().collect();
-
-    let (start, end) = section.content_range();
-    if start >= lines.len() {
-        return Ok(String::new());
+    if section.string3_line >= lines.len() {
+        return Err(RegeditedError::ZoneOutOfBounds {
+            line: section.string3_line,
+            max_lines: lines.len(),
+        });
     }
-
-    let actual_end = end.min(lines.len() - 1);
-    let content_lines = &lines[start..=actual_end];
-    Ok(content_lines.join("\n"))
+    Ok(content.to_string())
 }
 
-/// Update a section's data block in content
+/// Update one index record's six structured lines in content.
 ///
 /// Returns new content with the data block replaced
 pub fn update_section_data(content: &str, section: &SectionInfo, new_data: &str) -> Result<String> {
@@ -553,11 +488,11 @@ pub fn update_lines(content: &str, changes: &[(usize, String)]) -> Result<String
     Ok(lines.join("\n"))
 }
 
-/// Find which section a line belongs to
+/// Find the fixed index record that physically contains a line.
 pub fn find_section_for_line(doc: &DocumentHeader, line: usize) -> Option<&SectionInfo> {
     doc.sections
         .values()
-        .find(|s| line >= s.header_line && line <= s.content_end)
+        .find(|s| line >= s.header_line && line <= s.string3_line)
 }
 
 #[cfg(test)]
@@ -566,87 +501,65 @@ mod tests {
 
     const TEST_DOC: &str = r#"# My Document
 
-## SECTION: Intro
+regedited open
 index: 100
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 intro string one
 intro string two
 intro string three
----
 Welcome to the intro section.
 This is the content.
 
-## SECTION: Config
+regedited open
 index: 200
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90
 config path
 config notes
 config ref
----
 Configuration details here.
 
-## SECTION: Data
+regedited open
 index: 300
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
 data summary
 data notes
 data ref
----
 Data content starts here.
 More data content.
 "#;
-
-    #[test]
-    fn test_parse_section_header() {
-        assert_eq!(
-            parse_section_header("## SECTION: MySection"),
-            Some("MySection".to_string())
-        );
-        assert_eq!(
-            parse_section_header("  ## SECTION: Indented"),
-            Some("Indented".to_string())
-        );
-        assert_eq!(
-            parse_section_header("## SECTION:"),
-            None // Empty name
-        );
-        assert_eq!(parse_section_header("# Just a heading"), None);
-        assert_eq!(parse_section_header("## Not a section"), None);
-    }
 
     #[test]
     fn test_scan_content() {
         let doc = scan_content(TEST_DOC).unwrap();
 
         assert_eq!(doc.section_count(), 3);
-        assert!(doc.get_section("Intro").is_some());
-        assert!(doc.get_section("Config").is_some());
-        assert!(doc.get_section("Data").is_some());
+        assert!(doc.get_section("index:100").is_some());
+        assert!(doc.get_section("index:200").is_some());
+        assert!(doc.get_section("index:300").is_some());
 
-        let intro = doc.get_section("Intro").unwrap();
+        let intro = doc.get_section("index:100").unwrap();
         assert_eq!(intro.header_line, 2);
         assert_eq!(intro.index_line, 3);
         assert_eq!(intro.ascii_line, 4);
         assert_eq!(intro.numeric_line, 5);
-        assert_eq!(intro.content_start, 10);
-        assert_eq!(intro.content_end, 12);
+        assert_eq!(intro.string3_line, 8);
 
-        let config = doc.get_section("Config").unwrap();
-        assert_eq!(config.header_line, 13);
-        assert_eq!(config.content_end, 22);
+        let config = doc.get_section("index:200").unwrap();
+        assert_eq!(config.header_line, 12);
+        assert_eq!(config.string3_line, 18);
 
-        let data = doc.get_section("Data").unwrap();
-        assert_eq!(data.header_line, 23);
-        assert_eq!(data.content_end, 32);
+        let data = doc.get_section("index:300").unwrap();
+        assert_eq!(data.header_line, 21);
+        assert_eq!(data.string3_line, 27);
     }
 
     #[test]
     fn test_extract_section_data() {
         let doc = scan_content(TEST_DOC).unwrap();
-        let intro = doc.get_section("Intro").unwrap();
+        let intro = doc.get_section("index:100").unwrap();
 
         let data = extract_section_data(TEST_DOC, intro).unwrap();
         assert!(data.contains("index: 100"));
@@ -658,7 +571,7 @@ More data content.
     #[test]
     fn test_extract_section_content() {
         let doc = scan_content(TEST_DOC).unwrap();
-        let intro = doc.get_section("Intro").unwrap();
+        let intro = doc.get_section("index:100").unwrap();
 
         let content = extract_section_content(TEST_DOC, intro).unwrap();
         assert!(content.contains("Welcome to the intro section."));
@@ -667,13 +580,12 @@ More data content.
     #[test]
     fn test_update_section_data() {
         let doc = scan_content(TEST_DOC).unwrap();
-        let intro = doc.get_section("Intro").unwrap();
+        let intro = doc.get_section("index:100").unwrap();
 
-        let new_data = "NEWASCII\n7 | 8 | 9 | 10 | 11 | 12\nnew1\nnew2\nnew3\n---";
+        let new_data = "index: 100\n0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000\n7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15\nnew1\nnew2\nnew3";
         let updated = update_section_data(TEST_DOC, intro, new_data).unwrap();
 
-        assert!(updated.contains("NEWASCII"));
-        assert!(updated.contains("7 | 8 | 9 | 10 | 11 | 12"));
+        assert!(updated.contains("7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15"));
         assert!(updated.contains("new1"));
         assert!(updated.contains("Welcome to the intro section."));
     }
@@ -692,23 +604,21 @@ More data content.
         let doc = scan_content(TEST_DOC).unwrap();
 
         let s = find_section_for_line(&doc, 2).unwrap();
-        assert_eq!(s.name, "Intro");
+        assert_eq!(s.name, "index:100");
 
         let s = find_section_for_line(&doc, 16).unwrap();
-        assert_eq!(s.name, "Config");
+        assert_eq!(s.name, "index:200");
 
-        // Data section - check a line within its content
-        let s = find_section_for_line(&doc, 30).unwrap();
-        assert_eq!(s.name, "Data");
+        assert!(find_section_for_line(&doc, 30).is_none());
     }
 
     #[test]
     fn test_case_insensitive_lookup() {
         let doc = scan_content(TEST_DOC).unwrap();
 
-        assert!(doc.get_section_case_insensitive("intro").is_some());
-        assert!(doc.get_section_case_insensitive("CONFIG").is_some());
-        assert!(doc.get_section_case_insensitive("data").is_some());
+        assert!(doc.get_section_case_insensitive("INDEX:100").is_some());
+        assert!(doc.get_section_case_insensitive("INDEX:200").is_some());
+        assert!(doc.get_section_case_insensitive("INDEX:300").is_some());
     }
 
     #[test]
@@ -716,10 +626,9 @@ More data content.
         let doc = scan_content(TEST_DOC).unwrap();
         for reference in ["200", "i200", "I200", "index:200", "INDEX:200"] {
             let section = doc.resolve_section(reference).unwrap();
-            assert_eq!(section.name, "Config");
+            assert_eq!(section.name, "index:200");
             assert_eq!(section.registry_index, Some(200));
         }
-        assert_eq!(doc.resolve_section("config").unwrap().name, "Config");
         assert!(doc.resolve_section("i999").is_err());
 
         for reference in ["64", "i64", "I64", "index:64", "INDEX:64"] {
@@ -732,22 +641,20 @@ More data content.
 
     #[test]
     fn duplicate_numeric_indexes_are_rejected_even_with_different_legacy_names() {
-        let duplicate = r#"## SECTION: First
+        let duplicate = r#"regedited open
 index: 64
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0
 
 
 
----
-## SECTION: Second
+regedited open
 index: 64
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0
 
 
 
----
 "#;
         let error = scan_content(duplicate).unwrap_err().to_string();
         assert!(error.contains("Duplicate registry index 64"), "{error}");
@@ -757,9 +664,9 @@ index: 64
     fn test_quick_scan_names() {
         let names = quick_scan_names(TEST_DOC);
         assert_eq!(names.len(), 3);
-        assert_eq!(names[0], ("Intro".to_string(), 2));
-        assert_eq!(names[1], ("Config".to_string(), 13));
-        assert_eq!(names[2], ("Data".to_string(), 23));
+        assert_eq!(names[0], ("index:100".to_string(), 2));
+        assert_eq!(names[1], ("index:200".to_string(), 12));
+        assert_eq!(names[2], ("index:300".to_string(), 21));
     }
 
     #[test]
@@ -775,7 +682,6 @@ index: 500
 html string one
 html string two
 html string three
----
 <p>Some HTML content here</p>
 
 /* arbitrary prefix regedited open arbitrary suffix */
@@ -785,7 +691,6 @@ index: 600
 script notes
 more notes
 ref notes
----
 <script>console.log("hello");</script>
 
 // regedited open
@@ -795,28 +700,26 @@ index: 700
 
 
 
----
 <p>Another section</p>
 
-## SECTION: TraditionalHeader
+## This ordinary heading is not an index marker
 index: 800
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
 trad str1
 trad str2
 trad str3
----
 Traditional content here.
 </body>
 </html>"#;
 
         let doc = scan_content(html_doc).unwrap();
 
-        // Should find all 4 sections (3 triggers + 1 traditional header)
+        // Only the three canonical literal triggers are indexes.
         assert_eq!(
             doc.section_count(),
-            4,
-            "Expected 4 sections, found {}",
+            3,
+            "Expected 3 indexes, found {}",
             doc.section_count()
         );
 
@@ -834,11 +737,7 @@ Traditional content here.
             "index:700 not found"
         );
 
-        // Traditional header still works
-        assert!(
-            doc.get_section("TraditionalHeader").is_some(),
-            "TraditionalHeader not found"
-        );
+        assert!(doc.get_section("TraditionalHeader").is_none());
     }
 
     #[test]
@@ -851,7 +750,6 @@ index: 999
 some notes
 more notes
 ref notes
----
 Content here.
 "#;
 
@@ -870,7 +768,6 @@ index: 111
 
 
 
----
 This block is intentionally not opened by mixed case.
 
 prefixregedited opensuffix
@@ -880,7 +777,6 @@ index: 222
 
 
 
----
 This block is opened by the exact lowercase trigger.
 "#;
 

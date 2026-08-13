@@ -50,7 +50,7 @@
 //! Regedited's WAL provides true atomicity: either all changes in a batch
 //! are applied, or none are. The main file is never in an inconsistent state.
 
-use crate::{RegeditedError, Result};
+use crate::{db_line::DecimalValue, RegeditedError, Result};
 #[allow(unused_imports)]
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -74,8 +74,8 @@ pub enum WalOperation {
     SetNum {
         section: String,
         index: usize,
-        old_value: i64,
-        new_value: i64,
+        old_value: DecimalValue,
+        new_value: DecimalValue,
     },
     /// Update a string value: set-str <section> <index> <value>
     SetStr {
@@ -208,8 +208,8 @@ impl WalOperation {
             "set-num" if parts.len() >= 5 => Ok(WalOperation::SetNum {
                 section: parts[1].clone(),
                 index: parts[2].parse().unwrap_or(0),
-                old_value: parts[3].parse().unwrap_or(0),
-                new_value: parts[4].parse().unwrap_or(0),
+                old_value: DecimalValue::parse(&parts[3])?,
+                new_value: DecimalValue::parse(&parts[4])?,
             }),
             "set-str" if parts.len() >= 5 => Ok(WalOperation::SetStr {
                 section: parts[1].clone(),
@@ -449,6 +449,21 @@ impl Wal {
         Ok(wal)
     }
 
+    /// Persist an empty transaction boundary so later CLI invocations can
+    /// observe that a transaction was explicitly started.
+    pub fn begin_session(&mut self) -> Result<()> {
+        if self.path.exists() && !self.committed {
+            return Err(RegeditedError::Parse(format!(
+                "Transaction already in progress for {}",
+                self.doc_path.display()
+            )));
+        }
+        self.entries.clear();
+        self.committed = false;
+        self.next_seq = 1;
+        self.write_header()
+    }
+
     /// Get the WAL file path from the document path
     #[allow(dead_code)]
     pub(crate) fn wal_path(doc_path: &Path) -> PathBuf {
@@ -490,6 +505,7 @@ impl Wal {
                         if entry.seq >= self.next_seq {
                             self.next_seq = entry.seq + 1;
                         }
+                        self.entries.push(entry);
                     }
                     Err(e) => {
                         // Log warning but continue — partial corruption handled during replay
@@ -722,7 +738,7 @@ impl WalStatus {
             if self.is_committed {
                 "YES"
             } else {
-                "NO (crash detected!)"
+                "NO (open or recovery pending)"
             },
             self.entry_count
         )
@@ -740,8 +756,8 @@ mod tests {
             WalOperation::SetNum {
                 section: "Config".to_string(),
                 index: 0,
-                old_value: 42,
-                new_value: 99,
+                old_value: 42.into(),
+                new_value: 99.into(),
             },
         );
 
@@ -778,8 +794,8 @@ mod tests {
         let op = WalOperation::SetNum {
             section: "Config".to_string(),
             index: 2,
-            old_value: 10,
-            new_value: 20,
+            old_value: 10.into(),
+            new_value: 20.into(),
         };
         let serialized = op.serialize_body();
         assert_eq!(serialized, "set-num|Config|2|10|20");
@@ -829,16 +845,16 @@ mod tests {
         wal.append(WalOperation::SetNum {
             section: "Config".to_string(),
             index: 0,
-            old_value: 1,
-            new_value: 2,
+            old_value: 1.into(),
+            new_value: 2.into(),
         })
         .unwrap();
 
         wal.append(WalOperation::SetNum {
             section: "Config".to_string(),
             index: 1,
-            old_value: 3,
-            new_value: 4,
+            old_value: 3.into(),
+            new_value: 4.into(),
         })
         .unwrap();
 

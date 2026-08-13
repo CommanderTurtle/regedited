@@ -2,7 +2,7 @@
 //! # Zone Extractor
 //!
 //! Extracts content zones from the markdown file using line ranges stored
-//! in the hex-word line store. Each section can define up to 3 zones that
+//! in the hex-word line store. Each index can define up to 3 zones that
 //! point to specific line ranges in the file.
 //!
 //! ## Zone Mapping
@@ -15,11 +15,11 @@
 //! ## Usage
 //!
 //! ```bash
-//! # Extract zone 0 from section "MySection"
-//! regedited grep myfile.md MySection 0
+//! # Extract zone 0 from index 64
+//! regedited grep myfile.md i64 0
 //!
 //! # Copy zone 2's string to clipboard
-//! regedited clip myfile.md MySection 2
+//! regedited clip myfile.md i64 2
 //! ```
 
 use crate::{extract_lines, header::SectionInfo, RegeditedError, Result};
@@ -27,7 +27,7 @@ use crate::{extract_lines, header::SectionInfo, RegeditedError, Result};
 /// An extracted zone with metadata
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Zone {
-    /// Section this zone belongs to
+    /// Legacy field name containing the index key this zone was resolved from
     pub section_name: String,
     /// Zone index (0-2)
     pub zone_index: usize,
@@ -121,7 +121,7 @@ impl std::fmt::Display for Zone {
 ///
 /// # Arguments
 /// * `content` - The full file content
-/// * `section` - The section info containing zone definitions
+/// * `section` - Compatibility variable containing fixed index metadata
 /// * `zone_index` - Which zone to extract (0-2)
 /// * `label` - The associated string label
 pub fn extract_zone(
@@ -142,14 +142,14 @@ pub fn extract_zone(
 
     let zone_pair = ascii_store.zone(zone_index).ok_or_else(|| {
         RegeditedError::Parse(format!(
-            "Zone {zone_index} not found in section '{}'",
+            "Zone {zone_index} not found in index '{}'",
             section.name
         ))
     })?;
 
     if zone_pair.is_empty() {
         return Err(RegeditedError::Parse(format!(
-            "Zone {zone_index} in section '{}' is not set (0,0)",
+            "Zone {zone_index} in index '{}' is not set (0,0)",
             section.name
         )));
     }
@@ -257,28 +257,22 @@ pub fn grep_in_zone(zone: &Zone, pattern: &str) -> Vec<(usize, String)> {
     matches
 }
 
-/// Grep-like search within a section's content
+/// Grep-like search in the document after validating an index record.
 ///
-/// Searches all lines in a section's content range.
+/// Indexes do not own surrounding text. Their zones provide the only bounded
+/// content ranges, so this compatibility helper searches the complete file.
 pub fn grep_in_section(
     content: &str,
     section: &SectionInfo,
     pattern: &str,
 ) -> Vec<(usize, String)> {
-    let mut matches = Vec::new();
-    let lines: Vec<&str> = content.lines().collect();
-    let (start, end) = section.content_range();
-
-    for line_num in start..=end {
-        if line_num >= lines.len() {
-            break;
-        }
-        if lines[line_num].contains(pattern) {
-            matches.push((line_num, lines[line_num].to_string()));
-        }
-    }
-
-    matches
+    let _ = section;
+    content
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains(pattern))
+        .map(|(line_num, line)| (line_num, line.to_string()))
+        .collect()
 }
 
 /// The ZoneExtractor struct provides a high-level API for zone operations
@@ -320,14 +314,13 @@ mod tests {
 
     const TEST_DOC: &str = r#"# My Document
 
-## SECTION: Code
+regedited open
 index: 100
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 important code summary
 notes about code
 reference link
----
 function hello() {
     println!("Hello, world!");
 }
@@ -336,14 +329,13 @@ function goodbye() {
     println!("Goodbye!");
 }
 
-## SECTION: Docs
+regedited open
 index: 200
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90
 documentation summary
 doc notes
 doc ref
----
 # Documentation
 
 This is the documentation section.
@@ -391,7 +383,7 @@ It has multiple lines of content.
     #[test]
     fn test_grep_in_section() {
         let doc = scan_content(TEST_DOC).unwrap();
-        let code_section = doc.get_section("Code").unwrap();
+        let code_section = doc.get_section("i100").unwrap();
 
         let matches = grep_in_section(TEST_DOC, code_section, "function");
         // function hello() and function goodbye()
@@ -435,7 +427,7 @@ It has multiple lines of content.
     fn test_zone_extractor() {
         let extractor = ZoneExtractor::new(TEST_DOC);
         let doc = scan_content(TEST_DOC).unwrap();
-        let code = doc.get_section("Code").unwrap();
+        let code = doc.get_section("i100").unwrap();
 
         // Test section grep
         let matches = extractor.grep_section(code, "function");

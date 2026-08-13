@@ -22,19 +22,18 @@ fn rgd_link(directory: &Path) -> PathBuf {
     link
 }
 
-fn legacy_named_document() -> String {
+fn canonical_document() -> String {
     let mut lines = vec![
         "# Numeric identity fixture".to_string(),
-        "## SECTION: LegacyCustomerName".to_string(),
+        "prefix-noise regedited open suffix-noise".to_string(),
         "index: 64".to_string(),
         "0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000".to_string(),
         "1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9".to_string(),
         "first string".to_string(),
         "second string".to_string(),
         "third string".to_string(),
-        "---".to_string(),
     ];
-    for number in 9..=110 {
+    for number in 8..=110 {
         lines.push(format!("line {}", number));
     }
     lines.join("\n")
@@ -47,7 +46,7 @@ fn numeric_refs_help_and_line_assignment_work_end_to_end() {
     std::fs::create_dir(&state).unwrap();
     let rgd = rgd_link(temporary.path());
     let document = temporary.path().join("legacy.md");
-    std::fs::write(&document, legacy_named_document()).unwrap();
+    std::fs::write(&document, canonical_document()).unwrap();
     let document_text = document.to_string_lossy().to_string();
 
     let loaded = run(&rgd, &state, &["load", &document_text]);
@@ -81,9 +80,9 @@ fn numeric_refs_help_and_line_assignment_work_end_to_end() {
     assert!(help.status.success());
     let help_text = text(&help.stdout);
     assert!(help_text.contains("[INDEXES & DOCUMENT]"));
-    assert!(help_text.contains("apply `-e` after `--help`"));
+    assert!(help_text.contains("apply `--ex [1|2|3|4]` after `--help`"));
 
-    let examples = run(&rgd, &state, &["--help", "-e"]);
+    let examples = run(&rgd, &state, &["--help", "--ex", "1"]);
     assert!(examples.status.success());
     let examples_text = text(&examples.stdout);
     assert!(examples_text.contains("rgd cv b 85 95 to i64 1"));
@@ -97,7 +96,7 @@ fn add_creates_canonical_numeric_indexes_and_rejects_duplicates() {
     std::fs::create_dir(&state).unwrap();
     let rgd = rgd_link(temporary.path());
     let document = temporary.path().join("document.md");
-    std::fs::write(&document, legacy_named_document()).unwrap();
+    std::fs::write(&document, canonical_document()).unwrap();
     let document_text = document.to_string_lossy().to_string();
 
     let loaded = run(&rgd, &state, &["load", &document_text]);

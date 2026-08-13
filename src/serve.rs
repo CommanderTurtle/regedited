@@ -11,14 +11,14 @@
 //!
 //! | Method | Path | Description |
 //! |--------|------|-------------|
-//! | GET | `/` | Server status + section list |
-//! | GET | `/sections` | List all sections |
-//! | GET | `/section/{name}` | Get section metadata + content |
-//! | GET | `/section/{name}/db` | Get database table |
-//! | GET | `/section/{name}/hexline` | Get hex-word line |
-//! | GET | `/section/{name}/ascii` | Legacy alias for `/hexline` |
-//! | GET | `/section/{name}/zone/{index}` | Extract zone content |
-//! | GET | `/grep?pattern={p}&section={s}` | Search for pattern |
+//! | GET | `/` | Server status + index list |
+//! | GET | `/sections` | List all indexes (compatibility route name) |
+//! | GET | `/section/{index}` | Get fixed-record metadata (legacy route name) |
+//! | GET | `/section/{index}/db` | Get database table |
+//! | GET | `/section/{index}/hexline` | Get hex-word line |
+//! | GET | `/section/{index}/ascii` | Legacy alias for `/hexline` |
+//! | GET | `/section/{index}/zone/{slot}` | Extract absolute zone content |
+//! | GET | `/grep?pattern={p}&index={i}` | Validate an index and search shared text |
 //! | GET | `/state` | Current Regedited state JSON |
 //! | GET | `/ref?spec={spec}` | Read a native ref spec |
 //! | GET | `/ref-bool?left={a}&op={op}&right={b}` | Boolean comparison over refs/literals |
@@ -34,12 +34,12 @@
 //!
 //! # Query from anywhere
 //! curl http://localhost:5000/sections
-//! curl http://localhost:5000/section/Config/db
-//! curl "http://localhost:5000/grep?pattern=enabled&section=Config"
+//! curl http://localhost:5000/section/64/db
+//! curl "http://localhost:5000/grep?pattern=enabled&index=64"
 //! ```
 
 use crate::{
-    db_line::parse_numeric_line,
+    db_line::{parse_numeric_line, DecimalValue},
     fast_ops::{fast_scan_content, ScannedSection},
     header::{scan_content, DocumentHeader},
     wal::WalStatus,
@@ -199,13 +199,11 @@ fn handle_sections(state: &ServerState) -> Response<std::io::Cursor<Vec<u8>>> {
         .map(|(name, info)| {
             let mut map = BTreeMap::new();
             map.insert("index".to_string(), info.index_label());
-            if info.registry_index.is_some() && name != &info.index_label() {
-                map.insert("legacy_name".to_string(), name.clone());
-            }
-            map.insert("header_line".to_string(), info.header_line.to_string());
-            map.insert("content_start".to_string(), info.content_start.to_string());
-            map.insert("content_end".to_string(), info.content_end.to_string());
-            map.insert("total_lines".to_string(), info.total_lines().to_string());
+            let _ = name;
+            map.insert("marker_line".to_string(), info.header_line.to_string());
+            map.insert("record_start".to_string(), info.index_line.to_string());
+            map.insert("record_end".to_string(), info.string3_line.to_string());
+            map.insert("record_lines".to_string(), info.total_lines().to_string());
             map
         })
         .collect();
@@ -229,23 +227,24 @@ fn handle_section(path: &str, state: &ServerState) -> Response<std::io::Cursor<V
             ""
         };
 
-        let body = format!(
-            r#"{{"name":"{}","header_line":{},"index_line":{},"ascii_line":{},"numeric_line":{},"content_start":{},"content_end":{},"db_line":"{}","total_lines":{}}}"#,
-            name,
-            info.header_line,
-            info.index_line,
-            info.ascii_line,
-            info.numeric_line,
-            info.content_start,
-            info.content_end,
-            db_line.replace('"', "\\\""),
-            info.total_lines()
-        );
-        json_response(200, &body)
+        let body = serde_json::json!({
+            "index": info.registry_index,
+            "index_key": info.index_label(),
+            "marker_line": info.header_line,
+            "index_line": info.index_line,
+            "hex_word_line": info.ascii_line,
+            "numeric_line": info.numeric_line,
+            "string1_line": info.string1_line,
+            "string2_line": info.string2_line,
+            "string3_line": info.string3_line,
+            "db_line": db_line,
+            "record_lines": info.total_lines()
+        });
+        json_response(200, &body.to_string())
     } else {
         json_response(
             404,
-            &format!(r#"{{"error": "Section '{}' not found"}}"#, name),
+            &format!(r#"{{"error":{}}}"#, json_escape(&format!("Index '{}' not found", name))),
         )
     }
 }
@@ -261,11 +260,6 @@ fn handle_section_db(path: &str, state: &ServerState) -> Response<std::io::Curso
         let lines: Vec<&str> = content.lines().collect();
 
         // Extract index, hex-word line, numeric line, and strings.
-        let index = if info.header_line + 1 < lines.len() {
-            lines[info.header_line + 1]
-        } else {
-            ""
-        };
         let ascii = if info.header_line + 2 < lines.len() {
             lines[info.header_line + 2]
         } else {
@@ -293,26 +287,23 @@ fn handle_section_db(path: &str, state: &ServerState) -> Response<std::io::Curso
             ""
         };
 
-        let db_values: Vec<i64> = parse_numeric_line(numeric)
+        let db_values: Vec<DecimalValue> = parse_numeric_line(numeric)
             .map(|values| values.to_vec())
             .unwrap_or_default();
 
-        let body = format!(
-            r#"{{"section":"{}","index":{},"hex_word_line":"{}","ascii_store":"{}","db_values":{},"strings":["{}","{}","{}"]}}"#,
-            name,
-            index,
-            ascii,
-            ascii,
-            serde_json::to_string(&db_values).unwrap_or_default(),
-            str1.replace('"', "\\\""),
-            str2.replace('"', "\\\""),
-            str3.replace('"', "\\\"")
-        );
-        json_response(200, &body)
+        let body = serde_json::json!({
+            "section": info.index_label(),
+            "index": info.registry_index,
+            "hex_word_line": ascii,
+            "ascii_store": ascii,
+            "db_values": db_values,
+            "strings": [str1, str2, str3]
+        });
+        json_response(200, &body.to_string())
     } else {
         json_response(
             404,
-            &format!(r#"{{"error": "Section '{}' not found"}}"#, name),
+            &format!(r#"{{"error":{}}}"#, json_escape(&format!("Index '{}' not found", name))),
         )
     }
 }
@@ -335,17 +326,17 @@ fn handle_section_ascii(path: &str, state: &ServerState) -> Response<std::io::Cu
             ""
         };
 
-        json_response(
-            200,
-            &format!(
-                r#"{{"section":"{}","hex_word_line":"{}","ascii_store":"{}"}}"#,
-                name, ascii, ascii
-            ),
-        )
+        let body = serde_json::json!({
+            "section": info.index_label(),
+            "index": info.registry_index,
+            "hex_word_line": ascii,
+            "ascii_store": ascii
+        });
+        json_response(200, &body.to_string())
     } else {
         json_response(
             404,
-            &format!(r#"{{"error":"Section '{}' not found"}}"#, name),
+            &format!(r#"{{"error":{}}}"#, json_escape(&format!("Index '{}' not found", name))),
         )
     }
 }
@@ -356,12 +347,23 @@ fn handle_section_zone(path: &str, state: &ServerState) -> Response<std::io::Cur
     if parts.len() < 5 {
         return json_response(
             400,
-            r#"{"error": "Invalid path. Use /section/{name}/zone/{index}"}"#,
+            r#"{"error": "Invalid path. Use /section/{index}/zone/{zone}"}"#,
         );
     }
 
     let name = parts[2];
-    let zone_idx: usize = parts[4].parse().unwrap_or(0);
+    let zone_idx: usize = match parts[4].parse() {
+        Ok(value) => value,
+        Err(error) => {
+            return json_response(
+                400,
+                &serde_json::json!({
+                    "error": format!("Invalid zero-based zone slot '{}': {}", parts[4], error)
+                })
+                .to_string(),
+            )
+        }
+    };
 
     let header = state.header.lock().unwrap();
     let content = state.content.lock().unwrap();
@@ -369,20 +371,23 @@ fn handle_section_zone(path: &str, state: &ServerState) -> Response<std::io::Cur
     if let Ok(info) = header.resolve_section(name) {
         match extract_zone_content(&content, info, zone_idx) {
             Ok(zone_content) => {
-                let body = format!(
-                    r#"{{"section":"{}","zone":{},"content":"{}"}}"#,
-                    name,
-                    zone_idx,
-                    zone_content.replace('"', "\\\"").replace('\n', "\\n")
-                );
-                json_response(200, &body)
+                let body = serde_json::json!({
+                    "section": info.index_label(),
+                    "index": info.registry_index,
+                    "zone": zone_idx,
+                    "content": zone_content
+                });
+                json_response(200, &body.to_string())
             }
-            Err(e) => json_response(500, &format!(r#"{{"error":"{}"}}"#, e)),
+            Err(e) => json_response(
+                500,
+                &serde_json::json!({ "error": e.to_string() }).to_string(),
+            ),
         }
     } else {
         json_response(
             404,
-            &format!(r#"{{"error":"Section '{}' not found"}}"#, name),
+            &format!(r#"{{"error":{}}}"#, json_escape(&format!("Index '{}' not found", name))),
         )
     }
 }
@@ -398,10 +403,9 @@ fn handle_grep(url: &str, state: &ServerState) -> Response<std::io::Cursor<Vec<u
 
     let header = state.header.lock().unwrap();
     let content = state.content.lock().unwrap();
-    let lines: Vec<&str> = content.lines().collect();
-    let selected_header_line = match index_filter {
+    let selected_index = match index_filter {
         Some(reference) => match header.resolve_section(reference) {
-            Ok(info) => Some(info.header_line),
+            Ok(info) => Some(info.index_label()),
             Err(_) => {
                 return json_response(
                     404,
@@ -414,33 +418,24 @@ fn handle_grep(url: &str, state: &ServerState) -> Response<std::io::Cursor<Vec<u
 
     let mut matches: Vec<BTreeMap<String, String>> = Vec::new();
 
-    for info in header.sections.values() {
-        if selected_header_line.is_some_and(|line| line != info.header_line) {
-            continue;
-        }
-
-        for (i, line) in lines
-            .iter()
-            .enumerate()
-            .skip(info.content_start)
-            .take(info.content_end.saturating_sub(info.content_start) + 1)
-        {
-            if line.to_lowercase().contains(&pattern.to_lowercase()) {
-                let mut m = BTreeMap::new();
-                m.insert("index".to_string(), info.index_label());
-                m.insert("line".to_string(), i.to_string());
-                m.insert("content".to_string(), line.to_string());
-                matches.push(m);
-            }
+    for (i, line) in content.lines().enumerate() {
+        if line.to_lowercase().contains(&pattern.to_lowercase()) {
+            let mut m = BTreeMap::new();
+            m.insert(
+                "context".to_string(),
+                selected_index.clone().unwrap_or_else(|| "__all__".to_string()),
+            );
+            m.insert("line".to_string(), i.to_string());
+            m.insert("content".to_string(), line.to_string());
+            matches.push(m);
         }
     }
 
-    let body = format!(
-        r#"{{"pattern":"{}","matches":{}}}"#,
-        pattern,
-        serde_json::to_string(&matches).unwrap_or_default()
-    );
-    json_response(200, &body)
+    let body = serde_json::json!({
+        "pattern": pattern,
+        "matches": matches
+    });
+    json_response(200, &body.to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -757,6 +752,53 @@ fn resolve_literal_or_ref(content: &str, value: &str) -> std::result::Result<Str
     }
 }
 
+fn compare_ref_values(
+    left_value: &str,
+    op: &str,
+    right_value: &str,
+) -> std::result::Result<bool, String> {
+    let normalized = op.to_ascii_lowercase();
+    match normalized.as_str() {
+        "contains" => Ok(left_value
+            .to_lowercase()
+            .contains(&right_value.to_lowercase())),
+        "eq" | "==" | "=" => match (
+            DecimalValue::parse(left_value.trim()),
+            DecimalValue::parse(right_value.trim()),
+        ) {
+            (Ok(left), Ok(right)) => Ok(left == right),
+            _ => Ok(left_value == right_value),
+        },
+        "ne" | "!=" => match (
+            DecimalValue::parse(left_value.trim()),
+            DecimalValue::parse(right_value.trim()),
+        ) {
+            (Ok(left), Ok(right)) => Ok(left != right),
+            _ => Ok(left_value != right_value),
+        },
+        "gt" | ">" | "gte" | ">=" | "lt" | "<" | "lte" | "<=" => {
+            let left_num = DecimalValue::parse(left_value.trim()).map_err(|error| {
+                format!("Left value '{}' is not numeric: {}", left_value.trim(), error)
+            })?;
+            let right_num = DecimalValue::parse(right_value.trim()).map_err(|error| {
+                format!(
+                    "Right value '{}' is not numeric: {}",
+                    right_value.trim(),
+                    error
+                )
+            })?;
+            Ok(match normalized.as_str() {
+                "gt" | ">" => left_num > right_num,
+                "gte" | ">=" => left_num >= right_num,
+                "lt" | "<" => left_num < right_num,
+                "lte" | "<=" => left_num <= right_num,
+                _ => unreachable!(),
+            })
+        }
+        _ => Err(format!("Unknown op '{}'", op)),
+    }
+}
+
 fn handle_ref_bool(url: &str, state: &ServerState) -> Response<std::io::Cursor<Vec<u8>>> {
     let params = parse_query_string(url);
     let Some(left) = params.get("left") else {
@@ -772,30 +814,7 @@ fn handle_ref_bool(url: &str, state: &ServerState) -> Response<std::io::Cursor<V
     let result = (|| -> std::result::Result<bool, String> {
         let left_value = resolve_literal_or_ref(&content, left)?;
         let right_value = resolve_literal_or_ref(&content, right)?;
-        let normalized = op.to_ascii_lowercase();
-        match normalized.as_str() {
-            "contains" => Ok(left_value
-                .to_lowercase()
-                .contains(&right_value.to_lowercase())),
-            "eq" | "==" | "=" => Ok(left_value == right_value),
-            "ne" | "!=" => Ok(left_value != right_value),
-            "gt" | ">" | "gte" | ">=" | "lt" | "<" | "lte" | "<=" => {
-                let left_num = left_value.trim().parse::<f64>().map_err(|e| {
-                    format!("Left value '{}' is not numeric: {}", left_value.trim(), e)
-                })?;
-                let right_num = right_value.trim().parse::<f64>().map_err(|e| {
-                    format!("Right value '{}' is not numeric: {}", right_value.trim(), e)
-                })?;
-                Ok(match normalized.as_str() {
-                    "gt" | ">" => left_num > right_num,
-                    "gte" | ">=" => left_num >= right_num,
-                    "lt" | "<" => left_num < right_num,
-                    "lte" | "<=" => left_num <= right_num,
-                    _ => unreachable!(),
-                })
-            }
-            _ => Err(format!("Unknown op '{}'", op)),
-        }
+        compare_ref_values(&left_value, op, &right_value)
     })();
 
     match result {
@@ -831,7 +850,10 @@ fn handle_wal(state: &ServerState) -> Response<std::io::Cursor<Vec<u8>>> {
             );
             json_response(200, &body)
         }
-        Err(e) => json_response(500, &format!(r#"{{"error":"{}"}}"#, e)),
+        Err(e) => json_response(
+            500,
+            &serde_json::json!({ "error": e.to_string() }).to_string(),
+        ),
     }
 }
 
@@ -869,37 +891,7 @@ fn handle_query(mut request: Request, state: &ServerState) {
             let right_value = resolve_literal_or_ref(&content, right);
             match (left_value, right_value) {
                 (Ok(left_value), Ok(right_value)) => {
-                    let normalized = op.to_ascii_lowercase();
-                    let value = match normalized.as_str() {
-                        "contains" => Ok(left_value
-                            .to_lowercase()
-                            .contains(&right_value.to_lowercase())),
-                        "eq" | "==" | "=" => Ok(left_value == right_value),
-                        "ne" | "!=" => Ok(left_value != right_value),
-                        "gt" | ">" | "gte" | ">=" | "lt" | "<" | "lte" | "<=" => {
-                            let left_num = left_value.trim().parse::<f64>().map_err(|e| {
-                                format!("Left value '{}' is not numeric: {}", left_value.trim(), e)
-                            });
-                            let right_num = right_value.trim().parse::<f64>().map_err(|e| {
-                                format!(
-                                    "Right value '{}' is not numeric: {}",
-                                    right_value.trim(),
-                                    e
-                                )
-                            });
-                            match (left_num, right_num) {
-                                (Ok(left_num), Ok(right_num)) => Ok(match normalized.as_str() {
-                                    "gt" | ">" => left_num > right_num,
-                                    "gte" | ">=" => left_num >= right_num,
-                                    "lt" | "<" => left_num < right_num,
-                                    "lte" | "<=" => left_num <= right_num,
-                                    _ => unreachable!(),
-                                }),
-                                (Err(e), _) | (_, Err(e)) => Err(e),
-                            }
-                        }
-                        _ => Err(format!("Unknown op '{}'", op)),
-                    };
+                    let value = compare_ref_values(&left_value, op, &right_value);
                     match value {
                         Ok(value) => json_response(200, &format!(r#"{{"value":{}}}"#, value)),
                         Err(e) => {
@@ -917,18 +909,17 @@ fn handle_query(mut request: Request, state: &ServerState) {
             parsed.get("patterns").and_then(|v| v.as_array()),
         ) {
             let header = state.header.lock().unwrap();
-            let Ok(info) = header.resolve_section(section) else {
+            if header.resolve_section(section).is_err() {
                 let response = json_response(
                     404,
-                    &format!(r#"{{"error":"Section '{}' not found"}}"#, section),
+                    &format!(r#"{{"error":{}}}"#, json_escape(&format!("Index '{}' not found", section))),
                 );
                 if let Err(e) = request.respond(response) {
                     eprintln!("Query response error: {}", e);
                 }
                 return;
-            };
-            let section_text =
-                line_range_text(&content, info.content_start, info.content_end).unwrap_or_default();
+            }
+            let section_text = content.as_str();
             let pats: Vec<String> = patterns
                 .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0
 //! # Zone Content Editor
 //!
-//! Manipulates markdown content blocks between zones with automatic
+//! Manipulates absolute line ranges selected by zones with automatic
 //! line number recalculation. When content is moved, copied, or appended,
 //! all hex-word line numbers are updated to remain consistent.
 //!
 //! ## Design
 //!
 //! The editor works by tracking **line offset deltas** — when a content
-//! block grows or shrinks, subsequent sections shift. The editor applies
+//! range grows or shrinks, later line references shift. The editor applies
 //! these deltas to all hex-word lines in the document.
 //!
 //! ## Python Integration
@@ -18,16 +18,16 @@
 //! ```python
 //! import subprocess
 //!
-//! # Copy zone 0 from Alpha to Beta
+//! # Copy zone 0 from index 64 to index 90
 //! subprocess.run([
 //!     "regedited", "zone-copy", "doc.md",
-//!     "--from", "Alpha", "--from-zone", "0",
-//!     "--to", "Beta", "--to-zone", "1"
+//!     "--from", "i64", "--from-zone", "0",
+//!     "--to", "i90", "--to-zone", "1"
 //! ])
 //!
 //! # Append zone content
 //! subprocess.run([
-//!     "regedited", "zone-append", "doc.md", "Alpha", "0",
+//!     "regedited", "zone-append", "doc.md", "i64", "0",
 //!     "--text", "new content here"
 //! ])
 //! ```
@@ -51,7 +51,7 @@ pub struct LineDelta {
 
 /// Apply a list of line deltas to a document
 ///
-/// When content blocks grow or shrink, all hex-word line numbers
+/// When selected line ranges grow or shrink, all hex-word line numbers
 /// after the change point need to be shifted. This function
 /// rebuilds the document with corrected line numbers.
 pub fn apply_line_deltas(content: &str, deltas: &[LineDelta]) -> Result<String> {
@@ -165,9 +165,8 @@ pub fn extract_zone_content(
 
 /// Replace a zone's content with new text
 ///
-/// The section's content block (between --- and next section) is modified
-/// to replace the lines within the zone's range. After replacement,
-/// all subsequent sections' hex-word line numbers are recalculated.
+/// The zone's absolute line range in the shared document is replaced. After
+/// replacement, all later hex-word line numbers are recalculated.
 pub fn replace_zone_content(
     content: &str,
     section: &SectionInfo,
@@ -290,7 +289,7 @@ pub fn append_zone_content(
     replace_zone_content(content, section, zone_index, &combined)
 }
 
-/// Copy zone content from one section/zone to another
+/// Copy zone content from one index/zone to another.
 ///
 /// The target zone's content is replaced with the source zone's content.
 /// This is the primary operation for Python scripting.
@@ -369,14 +368,13 @@ mod tests {
     fn test_doc() -> String {
         r#"# Test Doc
 
-## SECTION: Alpha
+regedited open
 index: 100
-0x0000000 : 0x0000000 : 0x000000A : 0x00000014 : 0x0000000 : 0x0000000
+0x0000000 : 0x0000000 : 0x0000009 : 0x00000013 : 0x0000000 : 0x0000000
 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 alpha s1
 alpha s2
 alpha s3
----
 Line 10 content
 Line 11 content
 Line 12 content
@@ -389,14 +387,13 @@ Line 18 content
 Line 19 content
 Line 20 content
 
-## SECTION: Beta
+regedited open
 index: 200
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90
 beta s1
 beta s2
 beta s3
----
 Beta line 25
 Beta line 26
 "#
@@ -407,7 +404,7 @@ Beta line 26
     fn test_extract_zone_content() {
         let doc = test_doc();
         let header = scan_content(&doc).unwrap();
-        let alpha = header.get_section("Alpha").unwrap();
+        let alpha = header.get_section("i100").unwrap();
 
         let content = extract_zone_content(&doc, alpha, 1).unwrap();
         assert!(content.contains("Line 10 content"));
@@ -418,7 +415,7 @@ Beta line 26
     fn test_replace_zone_content() {
         let doc = test_doc();
         let header = scan_content(&doc).unwrap();
-        let alpha = header.get_section("Alpha").unwrap().clone();
+        let alpha = header.get_section("i100").unwrap().clone();
 
         let new =
             replace_zone_content(&doc, &alpha, 1, "REPLACED LINE 1\nREPLACED LINE 2").unwrap();
@@ -427,7 +424,7 @@ Beta line 26
         assert!(new.contains("REPLACED LINE 1"));
         assert!(!new.contains("Line 12 content"));
 
-        // Beta section should still exist
+        // The second index record should still exist.
         assert!(new.contains("Beta line 25"));
     }
 
@@ -435,7 +432,7 @@ Beta line 26
     fn test_append_zone_content() {
         let doc = test_doc();
         let header = scan_content(&doc).unwrap();
-        let alpha = header.get_section("Alpha").unwrap().clone();
+        let alpha = header.get_section("i100").unwrap().clone();
 
         let new = append_zone_content(&doc, &alpha, 1, "\nAPPENDED LINE").unwrap();
 
@@ -447,19 +444,18 @@ Beta line 26
     fn test_copy_zone_content() {
         // Use a doc where zone 2 has a valid range (not empty)
         let doc = r#"# Test
-## SECTION: Alpha
+regedited open
 index: 100
-0x0000000 : 0x0000000 : 0x000000A : 0x0000014 : 0x000000A : 0x0000014
+0x0000000 : 0x0000000 : 0x0000008 : 0x0000009 : 0x0000008 : 0x0000009
 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 alpha s1
 alpha s2
 alpha s3
----
 Line 10 content
 Line 11 content
 "#;
         let header = scan_content(doc).unwrap();
-        let alpha = header.get_section("Alpha").unwrap().clone();
+        let alpha = header.get_section("i100").unwrap().clone();
 
         // Copy zone 1 (lines 10-20) → zone 2 (also lines 10-20)
         let new = copy_zone_content(doc, &alpha, 1, &alpha, 2).unwrap();
@@ -486,7 +482,7 @@ Line 11 content
     fn test_get_zone_range() {
         let doc = test_doc();
         let header = scan_content(&doc).unwrap();
-        let alpha = header.get_section("Alpha").unwrap();
+        let alpha = header.get_section("i100").unwrap();
 
         let (start, end, zt) = get_zone_range(&doc, alpha, 1).unwrap();
         assert_eq!(start, 10);

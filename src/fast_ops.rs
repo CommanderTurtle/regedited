@@ -16,11 +16,11 @@
 //!
 //! | Safetensors | Regedited |
 //! |-------------|--------|
-//! | `load_file()` header JSON | `scan_file()` section index |
-//! | Key name filter | Section name glob |
+//! | `load_file()` header JSON | `scan_file()` numeric index map |
+//! | Key name filter | Numeric index/key filter |
 //! | Shape filter | Database value filter |
 //! | Tensor offset | Line number offset |
-//! | `save_file()` patched header | `fast_replace()` patched sections |
+//! | `save_file()` patched header | `fast_replace()` patched fixed records |
 //!
 //! ## Design
 //!
@@ -28,13 +28,19 @@
 //! not content. The actual markdown content is only read when extracting
 //! a specific zone or performing a replace.
 
-use crate::{ascii_store::AsciiStore, header::scan_content, zone_type::ZoneType, MmapFile, Result};
+use crate::{
+    ascii_store::AsciiStore,
+    db_line::{parse_numeric_line, DecimalValue},
+    header::scan_content,
+    zone_type::ZoneType,
+    MmapFile, Result,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 // ==================== FAST SCAN ====================
 
-/// A scanned section with its key attributes
+/// A scanned fixed index record with its key attributes
 #[derive(Debug, Clone)]
 pub struct ScannedSection {
     pub name: String,
@@ -42,16 +48,16 @@ pub struct ScannedSection {
     pub header_line: usize,
     pub ascii_line: usize,
     pub numeric_line: usize,
-    pub db_values: [i64; 9],
+    pub db_values: [DecimalValue; 9],
     pub strings: [String; 3],
     pub zone_pairs: [(u32, u32); 3],
     pub zone_types: [ZoneType; 3],
-    pub content_lines: usize,
+    pub record_lines: usize,
 }
 
 /// Fast scan — like safetensors' header scan, reads metadata through mmap.
 ///
-/// Parses each section's index, hex-word line, and database line without
+/// Parses each fixed record's index, hex-word line, and database line without
 /// copying the whole document into Rust heap memory. The OS maps the file and
 /// the scanner walks borrowed string slices over that mapped view.
 pub fn fast_scan(file_path: &Path) -> Result<Vec<ScannedSection>> {
@@ -89,17 +95,14 @@ pub fn fast_scan_content(content: &str) -> Result<Vec<ScannedSection>> {
             continue;
         }
 
-        // Read index (supports both "index: 100" and plain "100")
-        let index = if let Some(idx_line) = line_lookup.get(&info.index_line) {
-            let idx_str = idx_line.trim();
-            if idx_str.starts_with("index:") || idx_str.starts_with("INDEX:") {
-                idx_str[6..].trim().parse::<u64>().unwrap_or(0)
-            } else {
-                idx_str.parse::<u64>().unwrap_or(0)
-            }
-        } else {
-            0
-        };
+        // The header scanner already resolved and de-duplicated the numeric
+        // identity. Never turn a malformed record into a valid-looking index 0.
+        let index = info.registry_index.ok_or_else(|| {
+            crate::RegeditedError::Parse(format!(
+                "Malformed index record at marker line {}: the following line must be 'index: N'",
+                info.header_line
+            ))
+        })?;
 
         // Read Hex-word line
         let ascii_line = info.header_line + 2;
@@ -111,9 +114,9 @@ pub fn fast_scan_content(content: &str) -> Result<Vec<ScannedSection>> {
 
         // Read database values (9 pipe-separated numbers)
         let db_values = if let Some(line) = line_lookup.get(&info.numeric_line) {
-            parse_numeric_line_fast(line)
+            parse_numeric_line(line)?
         } else {
-            [0; 9]
+            std::array::from_fn(|_| DecimalValue::default())
         };
 
         // Read 3 strings
@@ -135,12 +138,6 @@ pub fn fast_scan_content(content: &str) -> Result<Vec<ScannedSection>> {
             }
         }
 
-        let content_lines = if info.content_end >= info.content_start {
-            info.content_end - info.content_start + 1
-        } else {
-            0
-        };
-
         results.push(ScannedSection {
             name: name.clone(),
             index,
@@ -151,27 +148,14 @@ pub fn fast_scan_content(content: &str) -> Result<Vec<ScannedSection>> {
             strings,
             zone_pairs,
             zone_types,
-            content_lines,
+            record_lines: info.total_lines(),
         });
     }
 
     Ok(results)
 }
 
-/// Parse 9 pipe-separated numbers quickly (no error handling overhead)
-fn parse_numeric_line_fast(line: &str) -> [i64; 9] {
-    let mut result = [0i64; 9];
-    let sep = if line.contains(" | ") { " | " } else { "\t" };
-    let parts: Vec<&str> = line.split(sep).collect();
-    for (i, part) in parts.iter().take(9).enumerate() {
-        if let Ok(v) = part.trim().parse::<i64>() {
-            result[i] = v;
-        }
-    }
-    result
-}
-
-/// Filter scanned indexes by numeric identity or legacy key pattern.
+/// Filter scanned indexes by numeric identity or internal layout key.
 pub fn filter_by_name<'a>(
     sections: &'a [ScannedSection],
     pattern: &str,
@@ -187,23 +171,23 @@ pub fn filter_by_name<'a>(
         .collect()
 }
 
-/// Filter scanned sections by database value range
+/// Filter scanned indexes by database value range.
 pub fn filter_by_value(
     sections: &[ScannedSection],
     index: usize,
-    min: i64,
-    max: i64,
+    min: &DecimalValue,
+    max: &DecimalValue,
 ) -> Vec<&ScannedSection> {
     if index >= 9 {
         return Vec::new();
     }
     sections
         .iter()
-        .filter(|s| s.db_values[index] >= min && s.db_values[index] <= max)
+        .filter(|s| &s.db_values[index] >= min && &s.db_values[index] <= max)
         .collect()
 }
 
-/// Filter scanned sections by zone type
+/// Filter scanned indexes by zone type.
 pub fn filter_by_type(sections: &[ScannedSection], zt: ZoneType) -> Vec<&ScannedSection> {
     sections
         .iter()
@@ -211,7 +195,7 @@ pub fn filter_by_type(sections: &[ScannedSection], zt: ZoneType) -> Vec<&Scanned
         .collect()
 }
 
-/// Filter scanned sections by string content
+/// Filter scanned indexes by string content.
 pub fn filter_by_string<'a>(
     sections: &'a [ScannedSection],
     index: usize,
@@ -237,7 +221,7 @@ pub struct DiffResult {
     /// Sections only in file B
     pub only_in_b: Vec<String>,
     /// Sections with different database values
-    pub changed_db: Vec<(String, [i64; 9], [i64; 9])>,
+    pub changed_db: Vec<(String, [DecimalValue; 9], [DecimalValue; 9])>,
     /// Sections with different strings
     pub changed_strings: Vec<(String, [String; 3], [String; 3])>,
     /// Sections with different hex-word lines
@@ -248,7 +232,8 @@ pub struct DiffResult {
 
 /// Fast diff between two Regedited files — like `diff` but metadata-only
 ///
-/// For a 10GB file pair, this reads maybe 100KB of headers, not 20GB of content.
+/// Both files are scanned through memory maps while only fixed-record metadata
+/// is retained in Rust-owned collections.
 pub fn fast_diff(file_a: &Path, file_b: &Path) -> Result<DiffResult> {
     let scan_a = fast_scan(file_a)?;
     let scan_b = fast_scan(file_b)?;
@@ -269,7 +254,11 @@ pub fn fast_diff(file_a: &Path, file_b: &Path) -> Result<DiffResult> {
         if let Some(sec_b) = map_b.get(index) {
             // Compare database values
             if sec_a.db_values != sec_b.db_values {
-                changed_db.push((key.clone(), sec_a.db_values, sec_b.db_values));
+                changed_db.push((
+                    key.clone(),
+                    sec_a.db_values.clone(),
+                    sec_b.db_values.clone(),
+                ));
             }
             // Compare strings
             if sec_a.strings != sec_b.strings {
@@ -452,7 +441,7 @@ pub fn fast_replace(
             result = crate::header::update_line(
                 &result,
                 sec_target.numeric_line,
-                &new_numeric.join("\t"),
+                &new_numeric.join(" | "),
             )?;
 
             // Replace 3 string lines
@@ -466,108 +455,16 @@ pub fn fast_replace(
     Ok(result)
 }
 
-/// Replace indexes including their CONTENT blocks (full index swap)
+/// Compatibility entry point for replacing complete index records.
 ///
-/// This is the content-aware version of `fast_replace`. It replaces not
-/// just metadata but also the actual content between `---` and the next
-/// index. Numeric registry indexes are the identity; legacy names are only
-/// accepted as selector aliases.
-///
-/// After replacement, all hex-word line numbers are recalculated.
+/// An index owns only its fixed six structured lines. Zone payloads are
+/// absolute file ranges and are never implicitly replaced by this operation.
 pub fn fast_replace_content(
     target_path: &Path,
     source_path: &Path,
     index_refs: Option<&[String]>,
 ) -> Result<String> {
-    let target_content = std::fs::read_to_string(target_path)?;
-    let source_content = std::fs::read_to_string(source_path)?;
-
-    let target_header = scan_content(&target_content)?;
-    let source_header = scan_content(&source_content)?;
-
-    let mut result = target_content;
-
-    // Process indexes in reverse order (so line number shifts don't affect earlier ops)
-    let target_sections: Vec<_> = target_header.sections.values().collect();
-
-    for target_sec in target_sections.iter().rev() {
-        let Some(target_index) = target_sec.registry_index else {
-            continue;
-        };
-        let source_sec = source_header
-            .sections
-            .values()
-            .find(|section| section.registry_index == Some(target_index));
-        let should_replace = match index_refs {
-            Some(references) => references.iter().any(|reference| {
-                crate::header::parse_index_reference(reference) == Some(target_index)
-                    || reference.eq_ignore_ascii_case(&target_sec.name)
-            }),
-            None => source_sec.is_some(),
-        };
-
-        if !should_replace {
-            continue;
-        }
-
-        if let Some(source_sec) = source_sec {
-            // Get the full content block from source
-            let source_lines: Vec<&str> = source_content.lines().collect();
-            let content_start = source_sec.content_start;
-            let content_end = source_sec.content_end;
-
-            if content_start <= content_end && content_end < source_lines.len() {
-                let new_content = source_lines[content_start..=content_end].join("\n");
-
-                // Replace content in target
-                let target_lines: Vec<&str> = result.lines().collect();
-                let t_start = target_sec.content_start;
-                let t_end = target_sec.content_end;
-
-                if t_start <= t_end && t_end < target_lines.len() {
-                    let mut new_lines: Vec<String> = Vec::new();
-
-                    // Lines before content
-                    for line in target_lines.iter().take(t_start) {
-                        new_lines.push((*line).to_string());
-                    }
-
-                    // New content
-                    for line in new_content.lines() {
-                        new_lines.push(line.to_string());
-                    }
-
-                    // Lines after content
-                    for line in target_lines.iter().skip(t_end + 1) {
-                        new_lines.push((*line).to_string());
-                    }
-
-                    result = new_lines.join("\n");
-
-                    // Calculate line delta and apply to hex-word lines
-                    let old_count = (t_end - t_start) + 1;
-                    let new_count = new_content.lines().count();
-                    let delta = new_count as i64 - old_count as i64;
-
-                    if delta != 0 {
-                        use crate::zone_editor::{apply_line_deltas, LineDelta};
-                        result = apply_line_deltas(
-                            &result,
-                            &[LineDelta {
-                                start_line: t_start,
-                                delta,
-                            }],
-                        )?;
-                    }
-                }
-            }
-
-            // Also replace metadata (index, hex-word line, DB values, strings).
-            result = fast_replace_str(&result, &source_content, target_index)?;
-        }
-    }
-
-    Ok(result)
+    fast_replace(target_path, source_path, index_refs)
 }
 
 /// Helper: metadata-only replace for a single numeric index (string version)
@@ -608,7 +505,7 @@ fn fast_replace_str(
             result = crate::header::update_line(
                 &result,
                 sec_target.numeric_line,
-                &new_numeric.join("\t"),
+                &new_numeric.join(" | "),
             )?;
 
             // Replace 3 string lines
@@ -626,8 +523,7 @@ fn fast_replace_str(
 
 /// Memory-mapped line grep — ripgrep-style fast search
 ///
-/// Uses byte-level scanning on memory-mapped files for O(1) seek speed.
-/// For a 10GB file, only the matching lines are read into RAM.
+/// Uses a memory-mapped file and retains only matching lines as owned strings.
 pub fn fast_grep(file_path: &Path, pattern: &str) -> Result<Vec<(usize, String)>> {
     let mmap = MmapFile::open(file_path)?;
     Ok(grep_content(mmap.as_str(), pattern))
@@ -647,17 +543,21 @@ pub fn grep_content(content: &str, pattern: &str) -> Vec<(usize, String)> {
     matches
 }
 
-/// Section-limited grep — only search within a section's content
+/// Index-qualified grep.
+///
+/// Resolving the index validates the caller's context; the search still spans
+/// the full file because indexes do not own document sections.
 pub fn fast_grep_section(
     file_path: &Path,
     section_name: &str,
     pattern: &str,
 ) -> Result<Vec<(usize, String)>> {
-    let content = std::fs::read_to_string(file_path)?;
-    grep_content_section(&content, section_name, pattern)
+    let mmap = MmapFile::open(file_path)?;
+    grep_content_section(mmap.as_str(), section_name, pattern)
 }
 
-/// In-memory section-limited grep with the same matching rules as native grep.
+/// In-memory index-qualified grep with the same matching rules as native grep.
+/// The index is validated first; search spans the shared document.
 pub fn grep_content_section(
     content: &str,
     section_name: &str,
@@ -665,22 +565,8 @@ pub fn grep_content_section(
 ) -> Result<Vec<(usize, String)>> {
     let header = scan_content(content)?;
 
-    let section = header.resolve_section(section_name)?;
-
-    let lower_pattern = pattern.to_lowercase();
-    let lines: Vec<&str> = content.lines().collect();
-    let mut matches = Vec::new();
-
-    for line_num in section.content_start..=section.content_end {
-        if line_num >= lines.len() {
-            break;
-        }
-        if lines[line_num].to_lowercase().contains(&lower_pattern) {
-            matches.push((line_num, lines[line_num].to_string()));
-        }
-    }
-
-    Ok(matches)
+    header.resolve_section(section_name)?;
+    Ok(grep_content(content, pattern))
 }
 
 /// Multi-pattern grep — search for any of multiple patterns (OR logic)
@@ -730,7 +616,7 @@ impl ScannedSection {
             .collect();
 
         format!(
-            "  [{:>4}] {:<20} DB:[{}] Zones:[{}] Lines:{}",
+            "  [{:>4}] {:<20} DB:[{}] Zones:[{}] Record:{}",
             self.index,
             self.name,
             db_str.join(" "),
@@ -739,7 +625,7 @@ impl ScannedSection {
             } else {
                 active_zones.join(" ")
             },
-            self.content_lines,
+            self.record_lines,
         )
     }
 
@@ -789,24 +675,22 @@ mod tests {
     fn test_doc() -> String {
         r#"# Test
 
-## SECTION: Alpha
+regedited open
 index: 100
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 alpha str1
 alpha str2
 alpha str3
----
 Alpha content here.
 
-## SECTION: Beta
+regedited open
 index: 200
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90
 beta str1
 beta str2
 beta str3
----
 Beta content here.
 More beta.
 "#
@@ -818,10 +702,13 @@ More beta.
         let doc = test_doc();
         let scanned = fast_scan_content(&doc).unwrap();
         assert_eq!(scanned.len(), 2);
-        assert_eq!(scanned[0].name, "Alpha");
+        assert_eq!(scanned[0].name, "index:100");
         assert_eq!(scanned[0].index, 100);
-        assert_eq!(scanned[0].db_values, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-        assert_eq!(scanned[1].name, "Beta");
+        assert_eq!(
+            scanned[0].db_values,
+            [1, 2, 3, 4, 5, 6, 7, 8, 9].map(DecimalValue::from)
+        );
+        assert_eq!(scanned[1].name, "index:200");
         assert_eq!(scanned[1].index, 200);
     }
 
@@ -829,16 +716,18 @@ More beta.
     fn test_filter_by_name() {
         let doc = test_doc();
         let scanned = fast_scan_content(&doc).unwrap();
-        let filtered = filter_by_name(&scanned, "alp");
+        let filtered = filter_by_name(&scanned, "100");
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].name, "Alpha");
+        assert_eq!(filtered[0].name, "index:100");
     }
 
     #[test]
     fn test_filter_by_value() {
         let doc = test_doc();
         let scanned = fast_scan_content(&doc).unwrap();
-        let filtered = filter_by_value(&scanned, 0, 5, 50);
+        let min = DecimalValue::from(5);
+        let max = DecimalValue::from(50);
+        let filtered = filter_by_value(&scanned, 0, &min, &max);
         assert_eq!(filtered.len(), 1); // Only Beta(10) in range [5,50]; Alpha(1) is below
     }
 
@@ -854,8 +743,8 @@ More beta.
     fn test_fast_grep_section() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), test_doc()).unwrap();
-        let matches = fast_grep_section(tmp.path(), "Alpha", "content").unwrap();
-        assert_eq!(matches.len(), 1);
+        let matches = fast_grep_section(tmp.path(), "i100", "content").unwrap();
+        assert_eq!(matches.len(), 2);
     }
 
     #[test]
@@ -879,8 +768,8 @@ More beta.
             fast_grep(tmp.path(), "CONTENT").unwrap()
         );
         assert_eq!(
-            grep_content_section(&content, "Alpha", "content").unwrap(),
-            fast_grep_section(tmp.path(), "Alpha", "content").unwrap()
+            grep_content_section(&content, "i100", "content").unwrap(),
+            fast_grep_section(tmp.path(), "i100", "content").unwrap()
         );
         let patterns = ["Alpha".to_string(), "Beta".to_string()];
         assert_eq!(
@@ -924,18 +813,18 @@ More beta.
         std::fs::write(tmp_patch.path(), doc_patch).unwrap();
 
         let result = fast_replace(tmp_base.path(), tmp_patch.path(), None).unwrap();
-        assert!(result.contains("99\t88\t77")); // fast_replace uses tab separator
+        assert!(result.contains("99 | 88 | 77"));
         assert!(result.contains("alpha str1")); // Strings preserved from patch
     }
 
     #[test]
-    fn diff_and_replace_join_by_numeric_index_not_legacy_name() {
+    fn diff_and_replace_join_by_numeric_index_despite_marker_wrappers() {
         let tmp_base = tempfile::NamedTempFile::new().unwrap();
         let tmp_patch = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp_base.path(), test_doc()).unwrap();
 
         let patch = test_doc()
-            .replace("## SECTION: Alpha", "## SECTION: DonorAlpha")
+            .replacen("regedited open", "prefixregedited opensuffix", 1)
             .replace(
                 "1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9",
                 "99 | 88 | 77 | 66 | 55 | 44 | 33 | 22 | 11",
@@ -947,24 +836,22 @@ More beta.
         assert!(diff.changed_db[0].0.contains("index:100"));
 
         let replaced = fast_replace(tmp_base.path(), tmp_patch.path(), None).unwrap();
-        assert!(replaced.contains("99\t88\t77"));
-        assert!(replaced.contains("## SECTION: Alpha"));
+        assert!(replaced.contains("99 | 88 | 77"));
+        assert!(replaced.contains("regedited open"));
     }
 
     #[test]
-    fn full_content_replace_joins_by_numeric_index_not_legacy_name() {
+    fn full_content_replace_is_a_metadata_only_compatibility_alias() {
         let tmp_base = tempfile::NamedTempFile::new().unwrap();
         let tmp_patch = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp_base.path(), test_doc()).unwrap();
 
-        let patch = test_doc()
-            .replace("## SECTION: Alpha", "## SECTION: DonorAlpha")
-            .replace("Alpha content here.", "Patched alpha body.");
+        let patch = test_doc().replace("Alpha content here.", "Patched alpha body.");
         std::fs::write(tmp_patch.path(), patch).unwrap();
 
         let replaced = fast_replace_content(tmp_base.path(), tmp_patch.path(), None).unwrap();
-        assert!(replaced.contains("Patched alpha body."));
-        assert!(replaced.contains("## SECTION: Alpha"));
+        assert!(replaced.contains("Alpha content here."));
+        assert!(!replaced.contains("Patched alpha body."));
     }
 
     #[test]
@@ -972,7 +859,7 @@ More beta.
         let doc = test_doc();
         let scanned = fast_scan_content(&doc).unwrap();
         let display = scanned[0].display_compact();
-        assert!(display.contains("Alpha"));
+        assert!(display.contains("index:100"));
         assert!(display.contains("100"));
     }
 }

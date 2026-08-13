@@ -1,37 +1,35 @@
 // SPDX-License-Identifier: AGPL-3.0
 //! # Regedited - Fast Plaintext Parse-Ment Database
 //!
-//! A high-performance plaintext database system that uses structured markdown headers
-//! with offset/length metadata for instant seeking — no full-file parsing required.
+//! A high-performance plaintext database system that uses fixed index records
+//! and absolute hex-word line ranges for instant seeking.
 //!
 //! Inspired by the safetensors format's ability to quickly update keys in multi-GB files,
 //! Regedited brings that same philosophy to structured plaintext documents.
 //!
 //! ## Core Concepts
 //!
-//! - **Structured Headers**: Each section has a header with byte offsets and line ranges,
-//!   allowing O(1) jumps to any section.
-//! - **Database Lines**: Structured tabular data with 9 fields (6 numeric values, 3 strings)
-//!   that define content zones and metadata.
+//! - **Structured Records**: Any line containing the exact lowercase substring
+//!   `regedited open` makes the following six lines an index record.
+//! - **Database Lines**: Nine exact decimal values and three string lines provide
+//!   metadata without claiming ownership of surrounding document text.
 //! - **Zero-Copy Parsing**: Uses memory-mapped I/O to read files without loading them into RAM.
-//! - **Fast Updates**: Rewrite only changed sections, not the entire file.
+//! - **Fast Updates**: Rewrite only changed records or explicit zones.
 //! - **Zone Extraction**: Grep-like functionality using line ranges stored in database fields.
 //!
 //! ## Example File Format
 //!
 //! ```markdown
-//! # Regedited Document v1
-//! <!--DB:INDEX|offset=0|length=245|checksum=a3f2-->
+//! arbitrary prefix regedited open arbitrary suffix
+//! index: 64
+//! 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
+//! 1.25 | -0.125 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+//! First string line
+//! Second string line
+//! Third string line
 //!
-//! ## SECTION:Config
-//! <!--DB:HEADER|section=Config|db_line=5|content_start=7|content_end=50-->
-//! 1    100    200    50    60    70    "settings"    "path"    "notes"
-//!
-//! (content lines 7-50...)
-//!
-//! ## SECTION:Data
-//! <!--DB:HEADER|section=Data|db_line=52|content_start=54|content_end=120-->
-//! 51    300    400    100    110    120    "records"    "format"    "backup"
+//! All other document lines remain shared. Only explicit hex-word zones define
+//! bounded payloads.
 //! ```
 
 use std::path::Path;
@@ -98,7 +96,7 @@ pub enum RegeditedError {
     #[error("Parse error: {0}")]
     Parse(String),
 
-    #[error("Section not found: {0}")]
+    #[error("Index not found: {0}")]
     SectionNotFound(String),
 
     #[error("Invalid database line format: {0}")]

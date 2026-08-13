@@ -102,9 +102,9 @@ fn scan_json(document: &DocumentHeader) -> Result<String, JsValue> {
                 "hexLine": section.ascii_line,
                 "numericLine": section.numeric_line,
                 "stringLines": [section.string1_line, section.string2_line, section.string3_line],
-                "separatorLine": section.separator_line,
-                "contentStart": section.content_start,
-                "contentEnd": section.content_end,
+                "recordStart": section.index_line,
+                "recordEnd": section.string3_line,
+                "recordLines": section.total_lines(),
                 "headerByteOffset": section.header_byte_offset
             })
         })
@@ -162,8 +162,8 @@ fn index_json(content: &str, document: &DocumentHeader, index: u64) -> Result<St
             line(section.string3_line, "string 3")?
         ],
         "content": content,
-        "contentStart": section.content_start,
-        "contentEnd": section.content_end
+        "recordStart": section.index_line,
+        "recordEnd": section.string3_line
     }))
     .map_err(|error| JsValue::from_str(&error.to_string()))
 }
@@ -172,7 +172,7 @@ fn find_section<'a>(document: &'a DocumentHeader, key: &str) -> Result<&'a Secti
     document
         .get_section(key)
         .or_else(|| document.get_section_case_insensitive(key))
-        .ok_or_else(|| JsValue::from_str(&format!("section '{}' not found", key)))
+        .ok_or_else(|| JsValue::from_str(&format!("index '{}' not found", key)))
 }
 
 fn parse_js_index(value: &JsValue) -> Result<u64, JsValue> {
