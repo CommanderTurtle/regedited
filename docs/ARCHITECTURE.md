@@ -25,7 +25,7 @@ How Regedited works internally — from memory layout to hex-word encoding.
 
 ## Why It's Fast
 
-Regedited treats a plaintext markdown file like a **memory-mapped key-value store**. Instead of reading the entire file into RAM, it:
+Regedited's read-only fast paths treat a plaintext markdown file like a **memory-mapped key-value store**. Instead of reading the entire file into an owned buffer, those paths:
 
 1. **Memory-maps the file** via `memmap2` — the OS handles paging, only accessed pages touch RAM
 2. **Scans index openers** — a single pass finds exact lowercase `"regedited open"` substrings
@@ -59,7 +59,7 @@ the absolute ranges encoded in the hex-word line.
 2. **Human-readable format**: Plain markdown with hex-word annotations
 3. **Python-scriptable**: Clean stdout, subprocess-friendly
 4. **Windows-compatible**: Safe echo, clipboard support
-5. **Multi-GB capable**: memory-mapped reads and bounded fixed-record metadata
+5. **Multi-GB scan capable**: memory-mapped scan, metadata-diff, and single-pattern fast-grep paths with bounded fixed-record metadata
 
 ---
 
@@ -67,8 +67,8 @@ the absolute ranges encoded in the hex-word line.
 
 ```
 src/
-├── main.rs              # CLI router: 60+ commands via clap
-├── lib.rs               # Core types, re-exports, 21 public modules
+├── main.rs              # CLI router: 71 command surfaces via clap
+├── lib.rs               # Core types, re-exports, 22 public modules
 │
 ├── CORE ENGINE
 ├── fast_ops.rs          # Scan, diff, replace, grep — safetensors-style header-only ops
@@ -91,19 +91,19 @@ src/
 ├── bool_ops.rs          # Boolean AND/NAND/OR/XOR + count + if-then-else
 │
 ├── SERIOUS CONFIGURATION SUBSTRATE
-├── wal.rs               # Write-ahead log: CRC32 checksummed, fsync'd, crash recovery
-├── transaction.rs       # Begin/commit/rollback: all-or-nothing batch atomicity
-├── schema.rs            # Optional per-index type enforcement (string/int/decimal/bool/path/enum/array)
-├── typed_value.rs       # 10 registry types: REG_SZ/DWORD/QWORD/BINARY/MULTI_SZ/EXPAND_SZ/JSON/TOML/BOOL
+├── wal.rs               # Write-ahead journal API: CRC32 checksummed, fsync'd entries and inspection
+├── transaction.rs       # Begin/commit/rollback staging library plus CLI WAL boundaries
+├── schema.rs            # Optional per-index type validation (string/int/decimal/bool/path/enum/array)
+├── typed_value.rs       # 10 registry types: REG_SZ/DWORD/QWORD/BINARY/MULTI_SZ/EXPAND_SZ/JSON/TOML/INT64/BOOL
 └── serve.rs             # HTTP container: indexes, grep, state, refs, boolean queries
 
 docs/
 ├── ARCHITECTURE.md        # Full internals: data flow, memory layout, hex-word deep-dive
-├── FLOWCHART.md           # 7 mermaid diagrams (module deps, CLI router, Python integration)
+├── FLOWCHART.md           # 8 mermaid diagrams (module deps, CLI router, Python integration)
 └── shell/                 # Command Reference Sheet (per-Shell)
-    ├──powershell.txt
-    ├──python.txt
-    └──bash.txt
+    ├──POWERSHELL.txt
+    ├──PYTHON.txt
+    └──BASH.txt
 ```
 ---
 
@@ -112,17 +112,18 @@ docs/
 ### Reading
 
 ```
-File → MmapFile (zero-copy) → scan_content() → DocumentHeader
-                                                    ↓
-                                            SectionInfo (record positions)
-                                                    ↓
-                                    extract_zone() → Zone (content + metadata)
+File → scan_file() / fast scan → MmapFile → scan_content() → DocumentHeader
+File → Store::open() / zone command → owned String → scan_content() → DocumentHeader
+                                                                    ↓
+                                                        SectionInfo (record positions)
+                                                                    ↓
+                                                 extract_zone() → Zone (content + metadata)
 ```
 
-1. `MmapFile::open()` memory-maps the file
-2. `scan_content()` finds all exact lowercase `"regedited open"` substrings in one pass
-3. `DocumentHeader` stores `SectionInfo` with fixed record line positions
-4. `extract_zone()` resolves the absolute line range encoded for that index
+1. `MmapFile::open()` memory-maps files for read-only scan, diff, and fast-grep paths
+2. `Store::open()` and direct zone commands instead read an owned UTF-8 string
+3. `scan_content()` finds all exact lowercase `"regedited open"` substrings and builds `SectionInfo` with fixed record positions
+4. `extract_zone()` resolves an encoded absolute line range from the owned document content
 
 ### Writing
 
@@ -133,13 +134,13 @@ Changes → Store.update_*() → content string manipulation
                                     ↓
                           apply_line_deltas() (recalculate hex-words)
                                     ↓
-                          fs::write() (atomic file replace)
+                          fs::write() (direct document rewrite)
 ```
 
 1. `Store` caches fixed index data to avoid repeated parsing
 2. Changes are batched and applied via `update_lines()`
 3. If content size changes, `apply_line_deltas()` shifts all subsequent line numbers
-4. File is written atomically (no partial writes visible to readers)
+4. File is rewritten directly after any configured backup or one-step undo copy
 
 ### Native Ref Resolution
 
@@ -263,9 +264,9 @@ pub struct ZonePair {
 }
 ```
 
-The public Rust type is still named `AsciiStore` for compatibility, but the concept is the hex-word line: six typed hex-words representing three zone pairs. The hex-word format `TxLLLLLLL` packs type and line number into a u32. This is parsed via bit masking, not string parsing, for speed.
+The public Rust type is still named `AsciiStore` for compatibility, but the concept is the hex-word line: six typed hex-words representing three zone pairs. The hex-word format `TxLLLLLLL` carries a type digit and seven-digit line number; the primary form is parsed from those fixed-width string fields, while the legacy packed form is decoded with bit masking.
 
-16GB per registry storefile
+Up to 268,435,456 physical line addresses per registry store file.
 
 ### DbLine
 
@@ -308,7 +309,7 @@ Each zone boundary is a single 32-bit value: `TxLLLLLLL`
 | `0x1` | Code | Code snippets, scripts, shell commands |
 | `0x2` | Media | Images, audio, video references |
 | `0x3` | Database | Tabular data, structured content |
-| `0x4-F` | Custom/Reserved | Domain-specific lanes for future tooling |
+| `0x4-F` | Reserved | Future expansion lanes |
 
 The category is intentionally visible at the first character of the hex-word. `0x...` reads as prose, `1x...` reads as code, `2x...` reads as media, and `3x...` reads as structured database content. This makes a single markdown, HTML, JS, or misc text file behave like a small database management surface while still remaining readable in Obsidian, VS Code, or any plain editor.
 
@@ -318,7 +319,7 @@ In practice:
 - **Code (`1`)**: scripts, shell commands, source snippets, generated config blocks.
 - **Media (`2`)**: image references, audio/video references, asset manifests.
 - **Database (`3`)**: generated tables, machine-owned summaries, structured blocks.
-- **Custom (`4-F`)**: reserved for domain-specific overlays once a project needs them.
+- **Reserved (`4-F`)**: unavailable until future zone types are implemented.
 
 ### Zone Pair Encoding
 
@@ -351,15 +352,15 @@ Both start and end are **inclusive** line numbers (0-indexed into the file). An 
 ### Decoding (Rust pseudo-code)
 
 ```rust
-fn decode_hex_word(hex_word: u32) -> (ZoneType, u32) {
-    let type_nibble = (hex_word >> 28) as u8;
-    let line_number = hex_word & 0xFFFFFFF;
-    (ZoneType::from_nibble(type_nibble), line_number)
+fn decode_hex_word(hex_word: &str) -> Result<(u32, ZoneType)> {
+    let type_nibble = u8::from_str_radix(&hex_word[0..1], 16)?;
+    let line_number = u32::from_str_radix(&hex_word[2..], 16)?;
+    Ok((line_number, ZoneType::from_nibble(type_nibble).unwrap_or_default()))
 }
 ```
 
 Each nine-character word is parsed once into a type nibble and 28-bit line
-number. The bit-field decode itself is constant time; extracting the addressed
+number. The fixed-width decode itself is constant time; extracting the addressed
 text still resolves the absolute line range in the document.
 
 ---
@@ -418,7 +419,7 @@ Every recognized opener has exactly six structured lines after it:
 
 ```markdown
 <!-- anything regedited open anything -->
-<Index>
+index: <N>
 <Hex-Word Line>
 <Database Line>
 <String 1>
@@ -467,17 +468,17 @@ hex-word zones provide bounded absolute line ranges.
 All non-record text is opaque to Regedited and remains shared. Zones may point
 to any absolute line range in the file; no marker owns the surrounding text.
 
-### Multi-GB File Considerations
+### Multi-GB Scan Considerations
 
-For files larger than available RAM:
+For files larger than available RAM, the read-only scan, metadata-diff, and single-pattern fast-grep paths provide:
 
-1. **Memory mapping**: Files are accessed via `memmap2` for zero-copy reads
+1. **Memory mapping**: Those paths use `memmap2` for zero-copy reads
 2. **Header scan only**: `scan` reads the fixed record lines, not an implicit body
 3. **Record positions**: The scanner keeps the seven physical record positions
-4. **Zone extraction**: Resolves only the explicitly encoded absolute line range
+4. **Zone extraction distinction**: Direct zone commands currently read an owned document string before resolving the encoded absolute line range
 5. **No eager source copy**: Read-side scans borrow the memory-mapped UTF-8 text
 
-The 28-bit line number limit (268,435,455 lines) supports files up to roughly 50-100GB with average line lengths of 50-100 bytes.
+The format's 28-bit maximum line address (268,435,455) represents roughly 13-27GB at average line lengths of 50-100 bytes; operations that read an owned document still require corresponding memory.
 
 ---
 
@@ -528,7 +529,7 @@ child ref such as `i<n>s<m>`, `i<n>db<m>`, `i<n>dbl`, `i<n>hl`, or
 | `bool-or` | `<file> <scope> <p1> [p2]...` | ANY pattern found in that scope |
 | `bool-xor` | `<file> <scope> <a> <b>` | Exactly ONE found in that scope |
 | `count` | `<file> <scope> <pattern>` | Always 0 (shows scoped count) |
-| `if-contains` | `<file> <scope> <p> [--then <v>] [--else <v>]` | Always 0 (prints value) |
+| `if-contains` | `<file> <scope> <p> [--then-val <v>] [--else-val <v>]` | Always 0 (prints value) |
 
 ### Native Ref Operations
 
@@ -570,7 +571,7 @@ child ref such as `i<n>s<m>`, `i<n>db<m>`, `i<n>dbl`, `i<n>hl`, or
 | Command | Args | Description |
 |---------|------|-------------|
 | `types` | | List zone types |
-| `convert` | `<start> <end> [-t <type>]` | Range to hex-words |
+| `convert` | `<value>... [-t <type>] [-z]` | One-to-six line values with inline types and optional `clip`/`c` suffix to hex-words |
 | `getutf` | `<number> [--decode <hex>]` | DWORD encode/decode |
 | `echo` | `<file> <S> <i>` | Safe echo string |
 | `echo-direct` | `<text>` | Safe echo raw text |
@@ -583,14 +584,14 @@ child ref such as `i<n>s<m>`, `i<n>db<m>`, `i<n>dbl`, `i<n>hl`, or
 | `diff` | `<a> <b>` | Metadata-only diff |
 | `replace` | `<target> <source> [-o <out>] [-s <i1> <i2>]` | Patch fixed records by numeric index |
 
-### WAL (Crash Safety)
+### WAL (Journal API)
 
 | Command | Args | Description |
 |---------|------|-------------|
 | `wal` | `<file>` | Show WAL status |
-| `wal-replay` | `<file> [--apply]` | Replay uncommitted WAL |
+| `wal-replay` | `<file> [--apply]` | Inspect entries; `--apply` currently resolves the WAL without applying document operations |
 
-### Transactions (Batch Atomicity)
+### Transactions (Staging Library and CLI WAL Boundary)
 
 | Command | Args | Description |
 |---------|------|-------------|
@@ -604,7 +605,7 @@ child ref such as `i<n>s<m>`, `i<n>db<m>`, `i<n>dbl`, `i<n>hl`, or
 | `state-compare` | `<file> <state.json>` | Compare current state with a prior snapshot |
 | `undo` | `<file>` | Restore the last `.undo` copy |
 
-### Schema (Type Enforcement)
+### Schema (Type Validation)
 
 | Command | Args | Description |
 |---------|------|-------------|
@@ -638,7 +639,7 @@ Serve mode is intentionally thin. It exposes the same native scan/ref/bool logic
 | GET | `/section/{index}/hexline` | Hex-word line |
 | GET | `/section/{index}/ascii` | Legacy alias for `/hexline` |
 | GET | `/section/{index}/zone/{i}` | Absolute zone content |
-| GET | `/grep?pattern={p}&index={i}` | Search the shared document after validating an index |
+| GET | `/grep?pattern={p}&index={i}` | Search the shared document after optionally validating an index |
 | GET | `/state` | Current native Regedited state JSON |
 | GET | `/ref?spec={spec}` | Read any native ref spec |
 | GET | `/ref-bool?left={a}&op={op}&right={b}` | Boolean comparison over refs/literals |
@@ -803,12 +804,12 @@ plaintext file.
 |-----------|------|--------|-------|
 | `scan` | O(file lines) | O(indexes) | Retains fixed record metadata |
 | `fgrep` | O(file lines) | O(matches) | Memory-mapped source; owns matches |
-| `zone-extract` | O(file lines) | O(zone bytes) | Absolute line-range resolution |
-| `zone-replace` | O(indexes) | O(file) | Must rewrite + recalculate |
+| `zone-extract` | O(file lines) | O(file + zone bytes) | Reads the document, then resolves the absolute line range |
+| `zone-replace` | O(file lines + indexes) | O(file) | Must rewrite + recalculate |
 | `diff` | O(file lines + indexes) | O(indexes) | Compares retained metadata |
-| `replace` | O(indexes) | O(file) | Fixed-record patches |
-| `bool-*` | O(patterns x content) | O(matches) | Shared-document matching |
-| `grab-html` | O(lines) | O(matches) | Streaming per line |
+| `replace` | O(file lines + indexes) | O(file) | Fixed-record patches |
+| `bool-*` | O(file lines + patterns x scope) | O(file + matches) | Exact selected-scope matching |
+| `grab-html` | O(lines) | O(file + matches) | Reads the file, then scans per line |
 
 ---
 
@@ -857,56 +858,55 @@ Beyond the core database, Regedited implements features that position it as a le
 
 ### 1. Write-Ahead Log (WAL) — `src/wal.rs`
 
-Every mutation is logged to a `.wal` file before touching the main document. On crash, the WAL is replayed to restore consistency.
+The WAL API appends operations to a `.wal` file before callers apply them. Ordinary CLI mutations are not automatically journaled, and the current replay command inspects and resolves the WAL without applying its operations to the main document.
 
 ```bash
 # Check WAL status
 regedited wal document.md
 
-# Replay uncommitted WAL entries (crash recovery)
+# Inspect and resolve uncommitted WAL entries
 regedited wal-replay document.md --apply
 ```
 
 **WAL Line Format:**
 ```
-SEQ|TIMESTAMP|OPERATION|SECTION|FIELD|OLD|NEW|CRC32
+SEQ|TIMESTAMP|OPERATION_BODY|CRC32
 ```
 
 Each entry is checksummed with CRC32. The WAL is human-readable and grep-friendly.
 
 | Feature | WAL Provides |
 |---------|-------------|
-| Atomicity | All changes in a batch are applied, or none |
+| Entry boundary | Each appended operation is stored as one checksummed line |
 | Durability | `fsync` after every entry |
 | Checksums | CRC32 per entry, corruption detected |
-| Crash recovery | Auto-replay on next open |
+| WAL resolution | Status and replay commands inspect or clean up uncommitted logs |
 | Human-readable | Line-based format, easy to inspect |
 
 ### 2. Transactions — `src/transaction.rs`
 
-Batch multiple operations into a single atomic unit with begin/commit/rollback semantics.
+The library transaction type can stage multiple operations with begin/commit/rollback semantics. The current CLI exposes the WAL session boundary, but ordinary mutation commands are not attached to that session.
 
 ```bash
 regedited tx begin document.md
-regedited set-num document.md Config 0 42
-regedited set-str document.md Config 0 "/new/path"
+regedited tx status document.md
 regedited tx commit document.md
 # or: regedited tx rollback document.md
 ```
 
-Transactions use WAL internally for durability. The registry cannot do this. PowerShell cannot do this. `reg.exe` cannot do this.
+The library transaction type uses WAL internally and returns staged operations for separate application on commit. The CLI lifecycle currently creates, inspects, commits, or removes the WAL boundary itself.
 
 | State | Description |
 |-------|-------------|
 | `Started` | Transaction created, no operations staged |
 | `Staging` | Operations staged, WAL logged |
-| `Committed` | All operations applied, WAL cleaned |
+| `Committed` | WAL marked committed; returned operations require separate application |
 | `RolledBack` | All operations discarded, WAL removed |
-| `Failed` | Error occurred, auto-rollback |
+| `Failed` | Defined library state for a failed transaction |
 
-### 3. Schema Enforcement — `src/schema.rs`
+### 3. Schema Validation — `src/schema.rs`
 
-Optional per-index schemas for type-safe configuration. The separate schema
+Optional per-index schemas for type-safe validation. The separate schema
 file retains `section` as its schema-group keyword; it does not define document
 sections.
 
@@ -930,7 +930,7 @@ section Config
 ---
 ```
 
-Supported types: `string`, `int`, `decimal`, `bool`, `path`, `enum`, `array`, `hex`
+Supported types: `string`, `int`, `decimal`, `bool`, `path`, `enum`, `array`
 Supported constraints: `required`, `optional`, `range(min, max)`, `one_of(a, b, c)`, `default(val)`, `pattern(regex)`
 
 ### 4. Typed Values — `src/typed_value.rs`
@@ -947,6 +947,7 @@ Rich data types beyond plain strings. Windows Registry types plus Regedited exte
 | `REG_EXPAND_SZ` | Expandable | `%SYSTEMROOT%\system32` |
 | `REG_JSON` | JSON | `{"name":"test","value":42}` |
 | `REG_TOML` | TOML | `name = "test"` |
+| `REG_INT64` | i64 | `-42` |
 | `REG_BOOL` | Boolean | `true` / `false` |
 
 ```bash
@@ -955,7 +956,10 @@ regedited reg-types
 
 # Parse a value as a specific type
 regedited reg-parse "42" --reg-type REG_DWORD
-# → 0x0000002A (42)
+# Result: Parsed as REG_DWORD
+#   Type:  Dword (u32)
+#   Value: 0x0000002A (42)
+#   Bytes: 4
 ```
 
 ### 5. Registry Container Mode — `src/serve.rs`

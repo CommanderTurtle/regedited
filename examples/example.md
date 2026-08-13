@@ -1,6 +1,6 @@
 # Regedited Example Document
 
-This document demonstrates the structured plaintext database format (v3).
+This document demonstrates the current structured plaintext database format.
 Each index record has:
 - An **index** in `index: N` format (human-readable, Obsidian-friendly)
 - A **hex-word store** (6 hex-words with embedded type nibbles, colon-separated)

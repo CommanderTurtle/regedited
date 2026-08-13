@@ -1,7 +1,7 @@
 # Python Scripting Guide
 
 Python should orchestrate the compiled Regedited process. Regedited keeps the
-file grammar, exact-decimal handling, zone relocation, and crash-safety logic;
+file grammar, exact-decimal handling, zone relocation, and one-step undo logic;
 Python supplies ordinary control flow.
 
 The executable is also its own example catalog:
@@ -129,7 +129,7 @@ print(run("fgrep-multi", DOC, "TODO", "FIXME", "SAFETY"))
 ## Guarded Relocation
 
 ```python
-run("commit", DOC)       # save the current compact checkpoint
+run("commit", DOC)       # on the initial run, save the compact checkpoint
 # An external editor moves lines here.
 print(run("check", DOC)) # calculate the guarded relocation proposal
 print(run("pull", DOC))  # apply only the safe proposal

@@ -1,6 +1,6 @@
 # Regedited Architecture Flowcharts
 
-Comprehensive mermaid diagrams showing all modules, call paths, and abilities.
+Mermaid diagrams showing the principal modules, call paths, and abilities.
 
 ---
 
@@ -9,7 +9,7 @@ Comprehensive mermaid diagrams showing all modules, call paths, and abilities.
 ```mermaid
 flowchart TB
     subgraph ENTRY["Entry Points"]
-        CLI["main.rs<br/>60+ CLI Commands"]
+        CLI["main.rs<br/>71 command surfaces"]
         PY["Python subprocess"]
         EVR["evcxr REPL (Jupyter)"]
         HTTP["serve.rs<br/>HTTP ref/state/query endpoints"]
@@ -24,7 +24,6 @@ flowchart TB
 
     subgraph INDEX["Document Index"]
         HDR["header.rs<br/>scan_content()<br/>DocumentHeader<br/>SectionInfo compatibility type"]
-        HSC["hex-word codec"]
     end
 
     subgraph DATA["Data Parsers"]
@@ -82,6 +81,7 @@ flowchart TB
     FO --> HDR
     FO --> AS
     FO --> DL
+    FO --> ZT
     FO --> MMF
 
     ZE --> HDR
@@ -89,19 +89,17 @@ flowchart TB
     ZE --> ZT
 
     ZN --> HDR
-    ZN --> AS
-
     AS --> ZT
-    DL --> HDR
+    DL --> CORE
 
     HE --> EN
-    BO -->|"content analysis"| ZE
     HTTP --> HDR
-    HTTP --> AS
-    HTTP --> BO
+    HTTP --> FO
+    HTTP --> DL
+    HTTP --> ZE
+    HTTP --> ZT
 
     HDR --> CORE
-    BS --> MMF
 ```
 
 ---
@@ -125,7 +123,7 @@ flowchart LR
     end
 
     subgraph GREP["Grep Commands"]
-        c_fgrep["fgrep &lt;file&gt; &lt;pattern&gt; [-s]"]
+        c_fgrep["fgrep &lt;file&gt; &lt;pattern&gt; [-i/--index]"]
         c_fgm["fgrep-multi &lt;file&gt; &lt;p1&gt; &lt;p2&gt;..."]
         c_grep["grep &lt;file&gt; &lt;index&gt; &lt;zone&gt;"]
         c_lines["lines &lt;file&gt; &lt;start&gt; &lt;end&gt;"]
@@ -161,7 +159,7 @@ flowchart LR
         c_bor["bool-or &lt;file&gt; SCOPE p1 [p2]..."]
         c_bxor["bool-xor &lt;file&gt; SCOPE a b"]
         c_count["count &lt;file&gt; SCOPE &lt;pattern&gt;"]
-        c_if["if-contains &lt;file&gt; SCOPE p<br>[--then] [--else]"]
+        c_if["if-contains &lt;file&gt; SCOPE p<br>[--then-val] [--else-val]"]
     end
 
     subgraph REF_CMD["Native Ref + State Commands"]
@@ -176,7 +174,7 @@ flowchart LR
 
     subgraph UTIL_CMD["Utility Commands"]
         c_types["types"]
-        c_conv["convert &lt;start&gt; &lt;end&gt; [-t type]"]
+        c_conv["convert &lt;value&gt;... [-t type] [-z]"]
         c_getutf["getutf &lt;n&gt; [--decode]"]
         c_echo["echo &lt;file&gt; S i"]
         c_echod["echo-direct &lt;text&gt;"]
@@ -206,7 +204,7 @@ flowchart TD
 
     subgraph PY_SCAN["Scanning"]
         ps1["re('scan', file)"]
-        ps2["re('scan', file, '--filter', 'Code')"]
+        ps2["re('scan', file, '--filter', '100')"]
         ps3["re('scan', file, '--value', '0:10:100')"]
     end
 
@@ -340,7 +338,7 @@ mindmap
       count :: count occurrences
       if_contains :: conditional output
     NativeRefs
-      ref_get :: read strings DB cells zones hex ranges
+      ref_get :: read whole indexes child fields or line ranges
       ref_set :: write literal stdin or ref source
       ref_copy :: copy or move ref to ref
       ref_diff :: compare two refs line by line
@@ -367,7 +365,7 @@ mindmap
       format_set_command :: output as set var
     Utility
       types :: list zone types
-      convert :: range to hex-words
+      convert :: one to six line values to hex-words
       getutf :: DWORD encode/decode
       echo :: safe echo for CMD
       echo_direct :: safe echo raw text
@@ -384,24 +382,24 @@ sequenceDiagram
     participant CLI as main.rs
     participant Store as store.rs
     participant Header as header.rs
-    participant Mmap as MmapFile
+    participant FS as std::fs
     participant Zone as zone.rs
     participant Ascii as ascii_store.rs
 
     User->>CLI: regedited grep doc.md i64 1
-    CLI->>Store: Store::open()
-    Store->>Mmap: MmapFile::open()
-    Mmap-->>Store: &str (zero-copy mmap)
+    CLI->>Store: Store::open_with_config()
+    Store->>FS: read_to_string()
+    FS-->>Store: owned String
     Store->>Header: scan_content()
-    Header->>Header: single line scan over mapped text
+    Header->>Header: single line scan over owned text
     Header->>Header: find exact lowercase trigger substring x N
     Header-->>Store: DocumentHeader (BTreeMap)
-    Store->>Ascii: AsciiStore::from_line()
-    Ascii-->>Store: ZonePair {start: 60, end: 66}
     Store->>Zone: extract_zone()
-    Zone->>Mmap: resolve absolute line range
-    Mmap-->>Zone: exact lines 60-66
-    Zone-->>CLI: Zone content
+    Zone->>Ascii: AsciiStore::from_line()
+    Ascii-->>Zone: ZonePair {start: 60, end: 66}
+    Zone->>Zone: resolve absolute line range
+    Zone-->>Store: exact lines 60-66
+    Store-->>CLI: Zone content
     CLI-->>User: Display content
 ```
 
@@ -424,15 +422,15 @@ sequenceDiagram
     AS-->>ZE: ZonePair {start: 60, end: 66}
     ZE->>ZE: Calculate delta<br/>(new_lines - old_lines)
     ZE->>ZE: Splice new content
-    ZE->>ZT: shift_hex_word_line()
-    ZT->>ZT: decode_hex_word() x 6
-    ZT->>ZT: Shift lines >= threshold
-    ZT->>ZT: encode_hex_word() x 6
-    ZT-->>ZE: Updated hex-word line
+    ZE->>ZE: apply_line_deltas()<br/>shift_hex_word_line()
+    ZE->>ZT: decode_hex_word() x 6
+    ZE->>ZE: Shift lines >= threshold
+    ZE->>ZT: encode_hex_word() x 6
+    ZT-->>ZE: Updated hex-words
     ZE->>HDR: update_lines()
     HDR-->>ZE: New document content
     ZE-->>CLI: Updated document
-    CLI->>CLI: fs::write() (atomic)
+    CLI->>CLI: copy prior file to .undo<br/>then fs::write()
     CLI-->>User: OK message
 ```
 
@@ -447,12 +445,13 @@ flowchart TB
         HDRS["exact lowercase trigger substring"]
         IDX["index: N"]
         ASCII["hex-word line<br/>3 typed zone pairs"]
-        DB["9 numeric DB values"]
+        DB["9 exact decimal DB values"]
         STR["3 string slots"]
         BODY["shared opaque document lines"]
     end
 
     subgraph REFS["Native Ref Specs"]
+        R0["index:N<br/>whole-index aggregate"]
         R1["index:N:string:1-3"]
         R2["index:N:db:1-9"]
         R3["index:N:dbline"]
@@ -460,7 +459,7 @@ flowchart TB
         R5["index:N:zone:1-3"]
         R6["index:N:zonehex:1-3"]
         R7["hex:start..end"]
-        R8["text:literal"]
+        R8["text:literal<br/>literal source"]
     end
 
     subgraph OPS["Operations"]
@@ -486,6 +485,11 @@ flowchart TB
     IDX --> STR
     FILE --> BODY
 
+    IDX --> R0
+    ASCII --> R0
+    DB --> R0
+    STR --> R0
+    BODY -->|defined zones only| R0
     STR --> R1
     DB --> R2
     DB --> R3
@@ -495,24 +499,37 @@ flowchart TB
     BODY --> R5
     BODY --> R7
 
+    R0 --> GET
     R1 --> GET
     R2 --> GET
+    R3 --> GET
+    R4 --> GET
     R5 --> GET
+    R6 --> GET
     R7 --> GET
+    R8 --> GET
+    R1 --> SET
+    R2 --> SET
+    R3 --> SET
+    R4 --> SET
+    R5 --> SET
+    R6 --> SET
+    R7 --> SET
     R8 --> SET
     GET --> DIFF
     GET --> BOOL
-    SET --> UNDO
-    COPY --> UNDO
-    SET --> ASCII
-    COPY --> ASCII
-    SNAP --> FILE
+    SET -. selected range writes .-> UNDO
+    COPY -. selected range writes .-> UNDO
+    SET --> FILE
+    COPY --> FILE
+    FILE --> SNAP
     UNDO --> FILE
 
     HTTP --> HSTATE
     HTTP --> HREF
     HTTP --> HBOOL
     HTTP --> HQUERY
+    HSTATE --> SNAP
     HREF --> REFS
     HBOOL --> BOOL
     HQUERY --> BOOL

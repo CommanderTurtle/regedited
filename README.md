@@ -57,14 +57,14 @@ Index `64` now has:
 
 ## Why It Is Fast
 
-The scan and search path memory-maps the file, walks borrowed UTF-8 slices, and builds compact metadata for each index. It does not deserialize a SQL database or construct an object for every content line.
+The fast scan, metadata-diff, and single-pattern `fgrep` paths memory-map the file, walk borrowed UTF-8 slices, and build compact metadata for each index. They do not deserialize a SQL database or construct an object for every content line.
 
 | Operation | What Regedited reads |
 |---|---|
 | `scan`, `fgrep`, metadata diff | Memory-mapped file and indexed metadata lines |
-| Indexed string or DB lookup | The selected index metadata |
-| Zone extraction | The line range stored in one zone pair |
-| Mutating commands | The UTF-8 document, then a guarded rewrite |
+| Indexed string or DB lookup | The owned UTF-8 document, then the selected index metadata |
+| Zone extraction | The owned UTF-8 document, then the line range stored in one zone pair |
+| Mutating commands | The owned UTF-8 document, then a direct rewrite with the command's backup or undo behavior |
 | `check` / `commit` | Compact fingerprints and surrounding line anchors |
 
 This is inspired by [safetensors](https://github.com/huggingface/safetensors): keep addresses small, make identity explicit, and avoid pretending the payload needs a heavyweight schema.
@@ -136,7 +136,7 @@ the file remains shared and only explicit zones create bounded ranges.
 ## Hex-Word Format: `Tx0123456`
 
 Each zone boundary is `TxLLLLLLL` where `T` = type digit (first character), `L` = line number (7 hex digits = 28 bits = 268M max lines):
-> 7 values = 16^6 line maximum for values (16 million line maximum)
+> 7 values = 16^7 line addresses (268,435,456 values; maximum line 268,435,455)
 
 | Hex-Word | Type | Line | Meaning |
 |----------|------|------|---------|
@@ -160,7 +160,7 @@ The first nibble is the content category. It lets a plain line pointer carry bot
 | `1` | Code | Scripts, commands, config snippets, source blocks |
 | `2` | Media | Image/audio/video references, asset manifests |
 | `3` | Database | Structured blocks, generated tables, machine-owned data |
-| `4-F` | Custom/Reserved | Domain-specific future lanes |
+| `4-F` | Reserved | Future expansion lanes |
 
 That category is why a single markdown file can act like a small database manager instead of a blob of text: Regedited knows which lines are prose, code, media, or structured data while still leaving the file human-readable.
 
@@ -169,7 +169,7 @@ That category is why a single markdown file can act like a small database manage
 | Category | Key Commands | Purpose |
 |----------|-------------|---------|
 | **Scan** | `list`, `scan`, `db`, `hexline` (`ascii` legacy) | Inspect documents |
-| **Grep** | `fgrep`, `fgrep-multi`, `grep` | Memory-mapped search |
+| **Grep** | `fgrep`, `fgrep-multi`, `grep` | Fast text search and direct zone reads |
 | **Zone** | `zone-copy`, `zone-append`, `zone-replace`, `zone-extract` | Content manipulation |
 | **Write** | `set-num`, `set-str`, `set-zone`, `add`, `rm` | Edit values |
 | **Diff** | `diff`, `replace` | Safetensors-style patch |
@@ -449,7 +449,7 @@ Regedited stores compact content fingerprints and nearby line anchors, not a doc
 | Checkpoint | `<document>.rgd-state.json` | One current compact checkpoint |
 | Pending diff | OS temp directory under `regedited/zone-diffs` | Guarded relocation proposal |
 | Undo | `<document>.undo` | One-step restoration for writes |
-| WAL | Document-adjacent WAL files | Crash-recovery state for WAL operations |
+| WAL | Document-adjacent WAL files | Journal state for explicit WAL operations |
 
 There is no commit history. A new checkpoint replaces the old checkpoint after safe work is accepted.
 
@@ -506,7 +506,7 @@ rgd --help --ex 1 # selectors 1-4 are standard; 5-8 are advanced
 | Metadata comparison | `diff`, `replace` |
 | Native state | `state`, `state-compare` |
 | Zone checkpoint | `check`, `commit`, `pull` |
-| Recovery | `undo`, `wal`, `wal-replay` |
+| Undo and WAL inspection | `undo`, `wal`, `wal-replay` |
 | Transactions | `tx begin`, `tx commit`, `tx rollback`, `tx status` |
 | Schemas and typed values | `schema`, `reg-types`, `reg-parse` |
 | Text utilities | `getutf`, `encap`, `grab-html` |
@@ -536,7 +536,7 @@ The `/sections` and `/section/...` route names are retained for compatibility; t
 | `GET` | `/section/{index}/hexline` | Six hex-words |
 | `GET` | `/section/{index}/ascii` | Legacy alias for `/hexline` |
 | `GET` | `/section/{index}/zone/{0-2}` | Direct zero-based zone content |
-| `GET` | `/grep?pattern=P&index=N` | Search one index; `section=` is accepted as an alias |
+| `GET` | `/grep?pattern=P&index=N` | Validate the optional index and search shared text; `section=` is accepted as an alias |
 | `GET` | `/state` | Native state JSON |
 | `GET` | `/ref?spec=SPEC` | Resolve a native reference |
 | `GET` | `/ref-bool?left=A&op=OP&right=B` | Boolean ref comparison |

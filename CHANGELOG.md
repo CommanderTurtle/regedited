@@ -4,7 +4,7 @@
 
 # 2026-08-13 - Parsing Bugfixes & Example Improvements
 
-- `rgd <command> --help --ex` now supports `--ex <1/2/3/4>` pertaining to `pwsh`,`bash`,`python`,`cmd` for all subcommands.
+- `rgd <command> --help --ex` now supports `--ex <1/2/3/4/5/6/7/8>` pertaining to standard and advanced `pwsh`,`bash`,`python`,`cmd` examples for all subcommands.
 
 - Bug fixes to decimal values
 
@@ -14,9 +14,9 @@ Basically my edits over a month of using regedited in the real world. Adjusted f
 
 Tip - Easy commands to get started:
 
-- `rgd rg <i#s# or i#z#>` (ripgrep for indices)
+- `rgd rg <i#s# or i#z#>` (native reference retrieval for index strings or zones)
 - `rgd ist <index number>` (String Summary)
-- `rgd convert 58 72 | Set-Clipboard` (Example finding hexword for later. Append to index manually. Lines 57-71.
+- `rgd convert 58 72 | Set-Clipboard` (Example finding hexword for later. Append to index manually. Zero-based lines 58-72.)
 - `rgd <commit/check/pull>` (Example using like git when things scoot downwards after editing)
 
 ---
