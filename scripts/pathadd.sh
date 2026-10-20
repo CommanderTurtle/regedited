@@ -15,7 +15,7 @@ ln -sfn regedited "$rgd"
 
 target_user="${SUDO_USER:-${USER:-$(id -un)}}"
 if command -v getent >/dev/null 2>&1; then
-  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  target_home="$(getent passwd "$target_user" | cut -d: -f6 || true)"
 else
   target_home="${HOME:?HOME is not set and getent is unavailable}"
 fi
