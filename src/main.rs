@@ -921,6 +921,9 @@ enum Commands {
         /// Read-only mode (disallow modifications)
         #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
         read_only: bool,
+        /// Allow browser clients from other origins (anonymous CORS)
+        #[arg(long)]
+        cors: bool,
     },
 }
 
@@ -2702,7 +2705,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             file,
             port,
             read_only,
-        } => cmd_serve(&file, port, read_only),
+            cors,
+        } => cmd_serve(&file, port, read_only, cors),
     }
 }
 
@@ -5419,7 +5423,12 @@ fn cmd_reg_parse(value: &str, reg_type: &str) -> Result<(), Box<dyn std::error::
 
 // ==================== SERVE COMMAND ====================
 
-fn cmd_serve(file: &Path, port: u16, read_only: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_serve(
+    file: &Path,
+    port: u16,
+    read_only: bool,
+    cors: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     use regedited::serve::{serve, ServeConfig};
 
     if !file.exists() {
@@ -5430,7 +5439,7 @@ fn cmd_serve(file: &Path, port: u16, read_only: bool) -> Result<(), Box<dyn std:
         port,
         file_path: file.display().to_string(),
         read_only,
-        cors: true,
+        cors,
     };
 
     println!(

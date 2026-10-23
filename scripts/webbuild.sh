@@ -48,9 +48,9 @@ printf 'Building browser package...\n'
   cd -- "$web"
   wasm-pack build . --target web --release --out-dir pkg
 )
-cp -- "$web/runner.js" "$pkg/runner.js"
+cp -- "$web/runner.js" "$web/runner.d.ts" "$web/package.json" "$pkg/"
 
-for name in regedited_web.js regedited_web_bg.wasm runner.js package.json; do
+for name in regedited_web.js regedited_web_bg.wasm runner.js runner.d.ts package.json; do
   [[ -f "$pkg/$name" ]] || {
     printf 'Build reported success but required artifact is missing: %s\n' "$pkg/$name" >&2
     exit 1

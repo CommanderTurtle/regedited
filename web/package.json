@@ -1,0 +1,12 @@
+{
+  "name": "regedited-web",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Regedited's read-only Rust parser for static pages and web applications.",
+  "license": "AGPL-3.0",
+  "repository": "github:CommanderTurtle/regedited",
+  "main": "regedited_web.js",
+  "types": "regedited_web.d.ts",
+  "files": ["regedited_web.js", "regedited_web.d.ts", "regedited_web_bg.wasm", "regedited_web_bg.wasm.d.ts", "runner.js", "runner.d.ts"],
+  "sideEffects": false
+}

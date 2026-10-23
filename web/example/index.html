@@ -3,12 +3,45 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Regedited Web Check</title>
+  <title>Regedited Web</title>
+  <style>
+    :root { color-scheme: light dark; font: 15px system-ui, sans-serif; }
+    body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; }
+    textarea, pre { box-sizing: border-box; width: 100%; font: 13px/1.5 ui-monospace, monospace; }
+    textarea { min-height: 240px; padding: .75rem; }
+    pre { padding: 1rem; border: 1px solid #7776; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .row { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; align-items: center; }
+    input:not([type=file]) { flex: 1; min-width: 180px; }
+    button, select, input { font: inherit; padding: .4rem; }
+    #status { min-height: 1.5em; }
+  </style>
 </head>
 <body>
-  <pre id="output">Loading...</pre>
+  <h1>Regedited Web</h1>
+  <label for="source">Document</label>
+  <textarea id="source" spellcheck="false" aria-label="Registry document"></textarea>
+  <div class="row">
+    <button id="load">Load text</button>
+    <label>Open file <input id="file" type="file"></label>
+  </div>
+  <div class="row">
+    <input id="server" type="url" value="http://localhost:5000" aria-label="Registry server base URL">
+    <button id="local">From local</button>
+  </div>
+  <form id="query" class="row">
+    <select id="command" aria-label="Command">
+      <option>scan</option><option>list</option><option>ref-get</option>
+      <option>resolve-index</option><option>db-exact</option><option>fgrep</option><option>convert</option>
+    </select>
+    <input id="argument" value="i38s1" aria-label="Command argument" placeholder="Reference, index, pattern or conversion">
+    <button>Run</button>
+  </form>
+  <div id="status" role="status">Loading WASM…</div>
+  <pre id="output" aria-label="Result"></pre>
   <script type="module">
-    import { createPageRunner, createRegeditedRunner } from "../pkg/runner.js";
+    import { createLocalRunner, createRegeditedRunner } from "../pkg/runner.js";
+    const $ = (id) => document.getElementById(id);
     const documentText = `prefix regedited open suffix
 index: 38
 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000
@@ -18,18 +51,38 @@ two
 three
 ---
 content`;
-    const rgd = await createRegeditedRunner(documentText);
-    const rawPage = await createPageRunner({ raw: true });
-    const result = {
-      ref: rgd.compactRef("i38s1"),
-      refValue: rgd.run("rg", "i38s1"),
-      conversion: rgd.run("cv", "d 58 p 59"),
-      scan: rgd.run("s"),
-      grep: rgd.run("f", "content"),
-      index: rgd.run("ri", 38),
-      rawPageSections: rawPage.list().length,
+    let rgd, generation = 0;
+    const show = (value) => { $("output").textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2); };
+    async function load(pending) {
+      const current = ++generation;
+      $("status").textContent = "Loading…";
+      try {
+        const next = await pending;
+        if (current !== generation) { next.dispose(); return; }
+        rgd?.dispose();
+        rgd = next;
+        $("source").value = next.rawContent;
+        const scan = next.scan();
+        $("status").textContent = `${scan.sections.length} indexes · ${scan.totalBytes} bytes`;
+        show(scan);
+      } catch (error) {
+        if (current === generation) $("status").textContent = error.message;
+      }
+    }
+    $("load").onclick = () => load(createRegeditedRunner($("source").value));
+    $("file").onchange = (event) => {
+      if (event.target.files[0]) load(createRegeditedRunner(event.target.files[0]));
     };
-    document.querySelector("#output").textContent = JSON.stringify(result, null, 2);
+    $("local").onclick = () => load(createLocalRunner($("server").value));
+    $("query").onsubmit = (event) => {
+      event.preventDefault();
+      try {
+        if (!rgd) throw new Error("Load a document first.");
+        show(rgd.run($("command").value, $("argument").value));
+      } catch (error) { $("status").textContent = error.message; }
+    };
+    $("source").value = documentText;
+    await load(createRegeditedRunner(documentText));
   </script>
 </body>
 </html>

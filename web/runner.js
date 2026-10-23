@@ -7,6 +7,27 @@ import init, {
   version,
 } from "./regedited_web.js";
 
+let initialization;
+
+function wasmCall(operation) {
+  try {
+    return operation();
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+// Share in-flight initialization; a failed download can be retried.
+export function initRegedited(wasm) {
+  initialization ??= Promise.resolve()
+    .then(() => init(wasm === undefined ? undefined : { module_or_path: wasm }))
+    .catch((error) => {
+      initialization = undefined;
+      throw error instanceof Error ? error : new Error(String(error));
+    });
+  return initialization;
+}
+
 const aliases = new Map([
   ["l", "list"],
   ["s", "scan"],
@@ -24,7 +45,32 @@ export class RegeditedRunner {
 
   constructor(content) {
     this.rawContent = String(content);
-    this.#registry = new Registry(this.rawContent);
+    this.#registry = wasmCall(() => new Registry(this.rawContent));
+  }
+
+  #call(method, ...args) {
+    if (!this.#registry) throw new Error("RegeditedRunner has been disposed.");
+    return wasmCall(() => this.#registry[method](...args));
+  }
+
+  replaceContent(content) {
+    if (!this.#registry) throw new Error("RegeditedRunner has been disposed.");
+    const text = String(content);
+    const next = wasmCall(() => new Registry(text));
+    this.#registry.free();
+    this.#registry = next;
+    this.rawContent = text;
+    return this;
+  }
+
+  dispose() {
+    this.#registry?.free();
+    this.#registry = undefined;
+    this.rawContent = "";
+  }
+
+  free() {
+    this.dispose();
   }
 
   version() {
@@ -32,7 +78,7 @@ export class RegeditedRunner {
   }
 
   scan() {
-    return JSON.parse(this.#registry.scan());
+    return JSON.parse(this.#call("scan"));
   }
 
   list() {
@@ -40,7 +86,7 @@ export class RegeditedRunner {
   }
 
   grep(pattern, scope) {
-    return JSON.parse(this.#registry.grep(String(pattern), scope));
+    return JSON.parse(this.#call("grep", String(pattern), scope));
   }
 
   fgrep(pattern, scope) {
@@ -48,7 +94,7 @@ export class RegeditedRunner {
   }
 
   readIndex(index) {
-    return JSON.parse(this.#registry.read_index(index));
+    return JSON.parse(this.#call("read_index", typeof index === "bigint" ? String(index) : index));
   }
 
   resolveIndex(index) {
@@ -76,11 +122,11 @@ export class RegeditedRunner {
   }
 
   sectionContent(key) {
-    return this.#registry.section_content(String(key));
+    return this.#call("section_content", String(key));
   }
 
   sectionData(key) {
-    return this.#registry.section_data(String(key));
+    return this.#call("section_data", String(key));
   }
 
   compactRef(value) {
@@ -89,7 +135,7 @@ export class RegeditedRunner {
 
   convert(values, defaultType = "markdown") {
     const input = Array.isArray(values) ? values.join(" ") : String(values);
-    return convertValue(input, defaultType);
+    return wasmCall(() => convertValue(input, defaultType));
   }
 
   refGet(reference) {
@@ -99,6 +145,14 @@ export class RegeditedRunner {
     );
     if (!match) {
       throw new Error(`Browser ref-get does not support '${canonical}'.`);
+    }
+
+    if (match[2]) {
+      const max = match[2] === "string" ? 3 : 9;
+      const slot = Number(match[3]);
+      if (slot < 1 || slot > max) {
+        throw new RangeError(`${match[2]} slot must be between 1 and ${max}.`);
+      }
     }
 
     const data = this.readIndex(match[1]);
@@ -142,19 +196,42 @@ export class RegeditedRunner {
   }
 }
 
-export async function createRegeditedRunner(content) {
-  await init();
-  return new RegeditedRunner(content);
+export async function createRegeditedRunner(content, { wasm } = {}) {
+  await initRegedited(wasm);
+  const text = typeof content?.text === "function" ? await content.text() : content;
+  return new RegeditedRunner(text);
 }
 
-export async function createPageRunner({ raw = false } = {}) {
+export async function createPageRunner({ raw = false, wasm, signal } = {}) {
+  if (!globalThis.document?.documentElement) {
+    throw new Error("createPageRunner requires a browser document; use createRegeditedRunner in workers.");
+  }
   const content = raw
-    ? await fetch(globalThis.location.href, { cache: "no-store" }).then((response) => {
+    ? await fetch(globalThis.location.href, { cache: "no-store", signal }).then((response) => {
         if (!response.ok) {
           throw new Error(`Could not read page source: HTTP ${response.status}`);
         }
         return response.text();
       })
     : globalThis.document.documentElement.outerHTML;
-  return createRegeditedRunner(content);
+  return createRegeditedRunner(content, { wasm });
+}
+
+// Fetch once, then use the same local Wasm API. No polling or native execution.
+export async function createLocalRunner(baseUrl = "http://localhost:5000", { wasm, signal, headers } = {}) {
+  const url = new URL(baseUrl);
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new TypeError("Registry server URL must use HTTP(S) without embedded credentials.");
+  }
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/document`;
+  url.search = "";
+  url.hash = "";
+  const response = await fetch(url, {
+    method: "GET", mode: "cors", credentials: "omit", cache: "no-store", signal, headers,
+  });
+  if (!response.ok) throw new Error(`Could not read registry document: HTTP ${response.status}`);
+  if (response.headers.get("content-type")?.split(";")[0].trim() !== "text/plain") {
+    throw new Error("Expected a text/plain registry document. Update the server or check its base URL.");
+  }
+  return createRegeditedRunner(await response.text(), { wasm });
 }

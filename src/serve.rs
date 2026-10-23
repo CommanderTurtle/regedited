@@ -20,6 +20,7 @@
 //! | GET | `/section/{index}/zone/{slot}` | Extract absolute zone content |
 //! | GET | `/grep?pattern={p}&index={i}` | Validate an index and search shared text |
 //! | GET | `/state` | Current Regedited state JSON |
+//! | GET | `/document` | Exact plaintext snapshot for browser/Wasm clients |
 //! | GET | `/ref?spec={spec}` | Read a native ref spec |
 //! | GET | `/ref-bool?left={a}&op={op}&right={b}` | Boolean comparison over refs/literals |
 //! | GET | `/types` | List zone types |
@@ -117,6 +118,7 @@ pub fn serve(config: ServeConfig) -> Result<()> {
     println!("  GET /section/{{index}}/zone/{{i}} — Zone content");
     println!("  GET /grep?pattern= &index= — Search an index");
     println!("  GET /state         — Current Regedited state");
+    println!("  GET /document      — Plaintext document snapshot");
     println!("  GET /ref?spec=     — Read native ref spec");
     println!("  GET /ref-bool?left=&op=&right= — Boolean ref check");
     println!("  GET /types         — Zone types");
@@ -138,7 +140,11 @@ fn handle_request(request: Request, state: Arc<ServerState>) {
     }
 
     let response = match (request.method(), request.url()) {
+        (Method::Options, _) if state.config.cors => {
+            Response::from_data(Vec::new()).with_status_code(StatusCode(204))
+        }
         (Method::Get, "/") => handle_root(&state),
+        (Method::Get, "/document") => handle_document(&state),
         (Method::Get, "/sections") => handle_sections(&state),
         (Method::Get, path) if path.starts_with("/section/") && path.ends_with("/db") => {
             handle_section_db(path, &state)
@@ -167,12 +173,20 @@ fn handle_request(request: Request, state: Arc<ServerState>) {
         _ => json_response(404, r#"{"error": "Not found"}"#),
     };
 
-    if let Err(e) = request.respond(response) {
+    if let Err(e) = request.respond(with_cors(response, state.config.cors)) {
         eprintln!("Response error: {}", e);
     }
 }
 
 // ==================== HANDLERS ====================
+
+fn handle_document(state: &ServerState) -> Response<std::io::Cursor<Vec<u8>>> {
+    Response::from_string(state.content.lock().unwrap().clone())
+        .with_header(
+            tiny_http::Header::from_bytes("Content-Type", "text/plain; charset=utf-8").unwrap(),
+        )
+        .with_header(tiny_http::Header::from_bytes("Cache-Control", "no-store").unwrap())
+}
 
 fn handle_root(state: &ServerState) -> Response<std::io::Cursor<Vec<u8>>> {
     let header = state.header.lock().unwrap();
@@ -976,12 +990,28 @@ fn handle_query(mut request: Request, state: &ServerState) {
     } else {
         json_response(400, r#"{"error": "Failed to read request body"}"#)
     };
-    if let Err(e) = request.respond(response) {
+    if let Err(e) = request.respond(with_cors(response, state.config.cors)) {
         eprintln!("Query response error: {}", e);
     }
 }
 
 // ==================== UTILITIES ====================
+
+fn with_cors(
+    mut response: Response<std::io::Cursor<Vec<u8>>>,
+    enabled: bool,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    if enabled {
+        for (name, value) in [
+            ("Access-Control-Allow-Origin", "*"),
+            ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+            ("Access-Control-Allow-Headers", "Content-Type, Authorization"),
+        ] {
+            response.add_header(tiny_http::Header::from_bytes(name, value).unwrap());
+        }
+    }
+    response
+}
 
 fn json_response(status: u16, body: &str) -> Response<std::io::Cursor<Vec<u8>>> {
     let data = body.as_bytes().to_vec();
@@ -1042,9 +1072,39 @@ fn percent_decode(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::read_bool_scope;
+    use super::*;
 
     const SCOPED_DOCUMENT: &str = "zone alpha\nzone beta\nforeign payload\nprefix-regedited open-suffix\nindex: 8\n1x0000000 : 1x0000001 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000\n0.125 | -1.5 | 2 | 3 | 4 | 5 | 6 | 7 | 8\nfirst alpha string\nsecond audit string\nthird string\n";
+
+    #[test]
+    fn cors_headers_are_present_only_when_enabled() {
+        for enabled in [false, true] {
+            let response = with_cors(json_response(404, "{}"), enabled);
+            assert_eq!(
+                response.headers().iter().any(|h| h.field.equiv("Access-Control-Allow-Origin")),
+                enabled,
+            );
+            assert!(!response.headers().iter().any(|h| h.field.equiv("Access-Control-Allow-Credentials")));
+        }
+    }
+
+    #[test]
+    fn document_snapshot_preserves_exact_text() {
+        use std::io::Read;
+        let content = "世界\r\n\r\nlast line\n";
+        let state = ServerState {
+            config: ServeConfig::default(),
+            header: Mutex::new(scan_content(content).unwrap()),
+            content: Mutex::new(content.to_owned()),
+        };
+        let response = handle_document(&state);
+        assert!(response.headers().iter().any(|h|
+            h.field.equiv("Content-Type") && h.value.as_str() == "text/plain; charset=utf-8"
+        ));
+        let mut actual = String::new();
+        response.into_reader().read_to_string(&mut actual).unwrap();
+        assert_eq!(actual, content);
+    }
 
     #[test]
     fn http_boolean_scope_uses_exact_refs_and_whole_index_aggregates() {

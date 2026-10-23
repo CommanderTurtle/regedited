@@ -2,13 +2,15 @@ REGEDITED WEB JAVASCRIPT REFERENCE
 
 BUILD OUTPUT
 
-Run webbuild.ps on Windows or webbuild.sh on Linux. The generated browser
+Run scripts/webbuild.ps1 on Windows or scripts/webbuild.sh on Linux. The generated browser
 package is web/pkg and contains at least:
 
   regedited_web.js
   regedited_web_bg.wasm
   regedited_web.d.ts
   regedited_web_bg.wasm.d.ts
+  runner.js
+  runner.d.ts
   package.json
 
 Copy the complete web/pkg directory into your static project. Do not copy only
@@ -144,6 +146,59 @@ dbExact(index) method, return the same nine decimal literals as strings. Use
 that exact form when values can exceed JavaScript Number precision; db remains
 available as numbers for existing browser callers.
 
+readIndex accepts safe integer numbers, numeric strings, or bigint values.
+Its indexExact field always preserves the full unsigned 64-bit index as text.
+Invalid references and Rust failures throw ordinary JavaScript Error objects.
+
+FILES, LIFECYCLE AND TYPESCRIPT
+
+const rgd = await createRegeditedRunner(fileInput.files[0]); // File or Blob
+try {
+  console.log(rgd.refGet("i38s1"));
+  rgd.replaceContent(updatedText); // rescans; failure keeps the old document
+} finally {
+  rgd.dispose(); // free() is an alias; repeated cleanup is safe
+}
+
+runner.d.ts supplies typed results and command overloads. Copy it with runner.js;
+both are included in the generated package's npm file list. The existing
+low-level package entry point remains unchanged. The async factories initialize
+Wasm once, share simultaneous loads, and allow retry after initialization fails.
+
+For bundlers, embedded Wasm, or workers, override the module location explicitly:
+
+import { initRegedited, createRegeditedRunner } from "./regedited/pkg/runner.js";
+await initRegedited(new URL("./assets/regedited_web_bg.wasm", import.meta.url));
+const rgd = await createRegeditedRunner(text);
+
+initRegedited accepts the generated loader's URL, Response, byte buffer,
+WebAssembly.Module, or a promise of one. Factories also accept { wasm: source }
+as options. The first successful initialization is reused. Document operations
+need no DOM; createPageRunner is the only factory that requires a page.
+
+FROM LOCAL (OPTIONAL HTTP SNAPSHOT)
+
+Start the native server only when HTTP access is wanted:
+
+regedited serve --file registry.txt --port 5000 --cors
+
+import { createLocalRunner } from "./regedited/pkg/runner.js";
+const rgd = await createLocalRunner("http://localhost:5000");
+try { console.log(rgd.refGet("i38s1")); }
+finally { rgd.dispose(); }
+
+This fetches GET /document once, then uses the same local Wasm runner. It does
+not poll or execute native commands. Call it again for a fresh server snapshot.
+An optional second argument accepts { signal, headers, wasm }; headers can carry
+a bearer token for an authenticated reverse proxy. The native server itself has
+no authentication. HTTP errors, non-text responses, and aborts are propagated.
+
+--cors explicitly enables anonymous cross-origin reads and OPTIONS preflight;
+without it the CLI emits no CORS permission headers. Only serve documents you
+intend to expose. The loader uses ordinary CORS fetch without cookies, proxies,
+or no-cors workarounds. Browser local-network permission, mixed-content rules,
+and the site's connect-src policy still apply.
+
 The stateless equivalents are also exported:
 
 JSON.parse(grep_document(rawPage, "waterfront"));
@@ -153,5 +208,16 @@ JSON.parse(read_index(rawPage, 38));
 SERVING
 
 ES modules and Wasm should be served over HTTP instead of opened with file://.
-Any ordinary static development server is sufficient. For the included check,
+Any ordinary static development server is sufficient. For the included playground,
 serve the web directory and open example/index.html.
+
+CHECKS (AFTER BUILDING web/pkg)
+
+node --test web/tests/runner.test.mjs
+cargo build --no-default-features --bin regedited
+node --test web/tests/*.test.mjs
+
+The second suite starts temporary native servers with synthetic documents and
+stops them on completion. Set REGEDITED_BIN to test another native binary.
+For TypeScript: tsc --noEmit --strict --target es2022 --module nodenext
+  --lib es2022,dom,esnext.disposable web/tests/types.test.ts

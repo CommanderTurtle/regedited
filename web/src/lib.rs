@@ -154,6 +154,7 @@ fn index_json(content: &str, document: &DocumentHeader, index: u64) -> Result<St
 
     serde_json::to_string(&json!({
         "index": index,
+        "indexExact": index.to_string(),
         "key": key,
         "hexLine": line(section.ascii_line, "hexword")?,
         "db": db,
