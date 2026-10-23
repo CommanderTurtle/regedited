@@ -2,6 +2,144 @@
 
 ---
 
+# 2026-10-23 - Zone Templates & Optional DOM Bindings
+
+- The big browser push: the Wasm package can now render registry data directly into a page. A new optional `dom.js` module binds marked elements (`data-rgd-ref`, `data-rgd-template`) to live registry fields and zones, with a small template language (`%s`, `{{iN...}}`, `{{$var}}`) for zone-backed content.
+
+- `refText` (`rgd.refText()`) returns exact decimal text with no `Number` rounding, and zone refs (`iNz1`, `iNzh1`) are now readable from the browser.
+
+- `rgd serve --cors` plus a new `GET /document` endpoint. `createLocalRunner()` in the browser fetches a one-shot snapshot of the served registry and runs the same in-memory Wasm API against it. No polling, no native execution.
+
+- Linux clipboard now uses session-native helpers (`wl-copy` / `wl-paste`, `xclip`) so clipboard ownership survives after the CLI exits. Wayland supported.
+
+- Linux install/build scripts hardened and made executable (smaller 2026-10-20 commit).
+
+- Also, since all of PHP collapsed this week (PHP2Shell RCE, and a third unpatched flaw disclosed on top of it): "switch to Next.js," they said. Well, now you can switch to Regedited — the whole web package runs client-side in Wasm, and there's no server to shell into.
+
+---
+
+## Testing/Advanced Info:
+
+This pass adds the optional DOM binding layer and the pieces that feed it:
+exact-text refs, a served-document snapshot endpoint, and a one-shot local
+runner. The core runner API is unchanged, everything is read-only, and the
+module is dependency-free.
+
+### DOM Bindings (`web/dom.js`, new)
+
+- Optional module shipped as `pkg/dom.js` + `dom.d.ts`. Works with any runner
+  source (supplied text, File/Blob, page source, local snapshot); existing
+  runner methods are unchanged.
+- `bindRegistry(runner, root = document, { variables, sanitizeHTML })`
+  returns `{ render(variables?), dispose() }`:
+  - `render()` re-reads the current runner snapshot, merges supplied
+    variables, and returns the number of bound elements.
+  - All refs are resolved and every binding validated before the live DOM is
+    touched; one per-render reference cache.
+  - Only marked elements are modified; the outermost binding owns its whole
+    subtree.
+  - `dispose()` releases the binding, leaves rendered DOM intact, and does
+    not dispose the runner.
+  - Document, Element (including itself), and DocumentFragment roots
+    supported. No timers, observers, background fetches, or automatic
+    refresh.
+- Element markers:
+  - `data-rgd-ref="i38s1"` — literal field, template tokens not interpreted.
+  - `data-rgd-template="i38z1"` — opts into substitution.
+  - `data-rgd-mode` — `text` (default, `textContent`), `value` (form
+    control), `html`.
+  - `data-rgd-args='["i38s1","i38db9"]'` — JSON array consumed by `%s` in
+    order.
+- Template grammar (zone content is data, not code):
+  - `%s` consumes one ref from the argument array; `%%` prints a literal
+    percent sign.
+  - Named tokens: `{{i38s1}}`, `{{index:38:db:9}}`, and `{{$variable}}`
+    (variables accept strings, numbers, bigints, booleans, and null).
+  - No eval, no expressions, no recursive expansion; unrelated `{{...}}`
+    tokens are left alone.
+  - Substitutions are HTML-escaped first. `html` mode requires an
+    application-supplied synchronous `sanitizeHTML` callback (may return a
+    string or native TrustedHTML); none is bundled.
+  - Active targets (SCRIPT, STYLE, IFRAME, OBJECT, EMBED, LINK, META, BASE)
+    are rejected; file inputs cannot be value-bound.
+- `formatTemplate(runner, template, { args, variables, escapeHTML })` is the
+  pure formatter: no DOM required, worker-safe.
+
+### Exact-Text Refs and Zone Reads (Wasm)
+
+- New `refText(reference)` / `ref_text`: exact text without building the
+  full index JSON or rounding DB values. Accepts `string`, `db`, `dbline`,
+  `hexline`, `hex-word-line`, `zone`, and `zonehex` refs.
+- Zone reads validate bounds: empty `0:0` zones return empty text; reversed
+  or out-of-document bounds throw.
+- `refGet` now also accepts `iNz1` (zone content as text) and `iNzh1`
+  (zonehex → `"start : end"`); existing numeric/object results unchanged.
+- `refText` on `iNdbM` returns the original literal decimal (e.g.
+  `9007199254740993`), bypassing `Number` entirely.
+
+### Local Registry Loading (browser)
+
+- `rgd serve --cors`: anonymous CORS is now opt-in (the server previously
+  always sent CORS headers). `OPTIONS` is answered with `204`. A unit test
+  pins header presence to the flag.
+- New `GET /document` on the served instance: exact plaintext snapshot as
+  `text/plain; charset=utf-8`.
+- `createLocalRunner(baseUrl = "http://localhost:5000", { wasm, signal,
+  headers })`: one `GET /document` (cors mode, credentials omitted,
+  no-store), validates HTTP(S) without embedded credentials and a
+  `text/plain` content type, then hands off to the same in-memory Wasm API.
+  No polling, no native execution.
+- `createPageRunner` accepts `wasm` + `signal`; browser-only paths guard
+  against worker use.
+- `web/package.json` added: `regedited-web` v0.2.0 (ESM,
+  `sideEffects: false`, explicit file list) so the built `pkg/` directory is
+  an installable package.
+- `runner.d.ts` now types the full surface; `runner.js` wraps Wasm calls in
+  clean errors, guards post-dispose use, and `initRegedited` dedupes
+  concurrent loads.
+
+### Linux Clipboard (`src/clip_linux.rs`, new)
+
+- Linux now delegates to session-native helpers instead of arboard's
+  in-process owner, which died when the CLI exited:
+  - Wayland: `wl-copy --type text/plain;charset=utf-8` /
+    `wl-paste --no-newline --type text`
+  - X11: `xclip -selection clipboard`, with a fallback helper chain
+- Ownership survives after the command exits; non-Linux platforms keep
+  arboard.
+
+### Scripts, Docs, and Tests
+
+- `scripts/pathadd.sh` / `scripts/webbuild.sh`: made executable, line
+  endings normalized, small robustness tweaks.
+- `scripts/webbuild.*` now copy `dom.js` / `dom.d.ts` into `pkg/` and
+  verify the artifacts.
+- Docs: new `docs/web/DOM.txt`; `JAVASCRIPT.txt` and `STANDALONE_HTML.txt`
+  extended for local loading and templates.
+- Examples: new `web/example/dom.html` (zone-backed card using `%s`,
+  `{{$viewer}}`, and html mode), linked from the playground page.
+- Tests: `web/tests/dom.test.mjs` (node --test), `web/tests/dom.html`
+  (real-browser checks), `web/tests/runner.test.mjs` and
+  `web/tests/local.test.mjs` (real Wasm against `pkg/`, including the exact
+  number `9007199254740993`), and an extended `types.test.ts`.
+
+### Included Commits
+
+- `f91137b` — Add zone templates and optional DOM bindings
+- `f78c7d4` — Polish browser API and add local registry loading
+- `5a53982` — Fix Linux clipboard ownership and Wayland support
+- `0c363d7` — Update pathadders on Linux
+- `12c771a` — Documentation Update
+
+### Validation
+
+- `node --test web/tests/*.test.mjs`: passed (DOM formatter/binding,
+  runner, and local-loading tests)
+- `web/tests/dom.html` in a real browser: passed
+- `cargo test`: passed, including Linux clipboard routing and the
+  serve/CORS changes
+---
+
 # 2026-08-13 - Parsing Bugfixes & Example Improvements
 
 - `rgd <command> --help --ex` now supports `--ex <1/2/3/4/5/6/7/8>` pertaining to standard and advanced `pwsh`,`bash`,`python`,`cmd` examples for all subcommands.
