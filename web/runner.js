@@ -138,8 +138,13 @@ export class RegeditedRunner {
     return wasmCall(() => convertValue(input, defaultType));
   }
 
+  refText(reference) {
+    return this.#call("ref_text", String(reference));
+  }
+
   refGet(reference) {
     const canonical = this.compactRef(reference);
+    if (/^index:\d+:(zone|zonehex):\d+$/.test(canonical)) return this.refText(canonical);
     const match = /^index:(\d+)(?::(string|db):(\d+)|:(dbline|hexline|hex-word-line))?$/.exec(
       canonical,
     );

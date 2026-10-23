@@ -34,6 +34,8 @@ rgd.indexStrList(38);
 rgd.hexline(38);
 rgd.content(38);
 rgd.refGet("i38s1");
+rgd.refGet("i38z1");
+rgd.refText("i38db9"); // exact text for DOM/templates, without Number rounding
 rgd.convert("d 58 p 59");
 
 The generic dispatcher accepts canonical binary spellings and their listed
@@ -206,6 +208,10 @@ JSON.parse(grep_document(rawPage, "waterfront", "index:38"));
 JSON.parse(read_index(rawPage, 38));
 
 SERVING
+
+For optional DOM bindings and zone templates, import bindRegistry/formatTemplate
+from web/pkg/dom.js. See docs/web/DOM.txt and web/example/dom.html. The helper
+does not replace existing runner APIs or require a frontend framework.
 
 ES modules and Wasm should be served over HTTP instead of opened with file://.
 Any ordinary static development server is sufficient. For the included playground,

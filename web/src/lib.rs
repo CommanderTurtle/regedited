@@ -32,6 +32,72 @@ impl Registry {
         index_json(&self.content, &self.header, parse_js_index(&index)?)
     }
 
+    /// Read a scalar/zone without constructing the full index JSON or rounding DB values.
+    pub fn ref_text(&self, reference: &str) -> Result<String, JsValue> {
+        let canonical =
+            regedited::qol::compact_ref(reference).unwrap_or_else(|| reference.to_string());
+        let parts: Vec<&str> = canonical.split(':').collect();
+        if parts.len() < 3 || !parts[0].eq_ignore_ascii_case("index") {
+            return Err(JsValue::from_str(
+                "Text references must select an index field or zone",
+            ));
+        }
+        let index = parts[1]
+            .parse::<u64>()
+            .map_err(|_| JsValue::from_str("Invalid unsigned registry index"))?;
+        let section = find_section(&self.header, &format!("index:{index}"))?;
+        let line = |number| {
+            self.content
+                .lines()
+                .nth(number)
+                .ok_or_else(|| JsValue::from_str("Referenced record line is out of bounds"))
+        };
+        let slot = |max| -> Result<usize, JsValue> {
+            parts
+                .get(3)
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|value| (1..=max).contains(value))
+                .map(|value| value - 1)
+                .ok_or_else(|| {
+                    JsValue::from_str(&format!("Reference slot must be between 1 and {max}"))
+                })
+        };
+        match (parts[2], parts.len()) {
+            ("string", 4) => Ok(line(section.string1_line + slot(3)?)?.to_owned()),
+            ("db", 4) => {
+                let slot = slot(9)?;
+                let values = regedited::db_line::parse_numeric_line(line(section.numeric_line)?)
+                    .map_err(|error| JsValue::from_str(&error.to_string()))?;
+                Ok(values[slot].to_string())
+            }
+            ("dbline", 3) => Ok(line(section.numeric_line)?.to_owned()),
+            ("hexline" | "hex-word-line", 3) => Ok(line(section.ascii_line)?.to_owned()),
+            ("zone" | "zonehex", 4) => {
+                let slot = slot(3)?;
+                let store = regedited::AsciiStore::from_line(line(section.ascii_line)?)
+                    .map_err(|error| JsValue::from_str(&error.to_string()))?;
+                let zone = store.zones[slot];
+                if parts[2] == "zonehex" {
+                    let (start, end) = zone.to_hex_words();
+                    return Ok(format!("{start} : {end}"));
+                }
+                if zone.is_empty() {
+                    return Ok(String::new());
+                }
+                if !zone.is_valid() || zone.end as usize >= self.header.total_lines {
+                    return Err(JsValue::from_str(
+                        "Zone bounds are outside the document or reversed",
+                    ));
+                }
+                regedited::zone_editor::extract_zone_content(&self.content, section, slot)
+                    .map_err(|error| JsValue::from_str(&error.to_string()))
+            }
+            _ => Err(JsValue::from_str(
+                "Unsupported text reference field or argument count",
+            )),
+        }
+    }
+
     pub fn section_content(&self, key: &str) -> Result<String, JsValue> {
         let section = find_section(&self.header, key)?;
         regedited::header::extract_section_content(&self.content, section)

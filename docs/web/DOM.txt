@@ -1,0 +1,94 @@
+REGEDITED DOM BINDINGS
+
+Optional, dependency-free module: web/pkg/dom.js (with dom.d.ts).
+It works with any runner: supplied text, File/Blob, page source, or an explicit
+createLocalRunner HTTP snapshot. Existing runner methods remain unchanged.
+
+FIELD AND ZONE BINDINGS
+
+  <h1 data-rgd-ref="i38s1"></h1>
+  <span data-rgd-ref="i38db9"></span>
+  <pre data-rgd-ref="i38z1"></pre>
+  <input data-rgd-ref="i38s2" data-rgd-mode="value">
+
+  import { createRegeditedRunner } from "./regedited/pkg/runner.js";
+  import { bindRegistry } from "./regedited/pkg/dom.js";
+  const rgd = await createRegeditedRunner(documentText);
+  const view = bindRegistry(rgd, document);
+
+data-rgd-ref inserts the field literally, without interpreting template tokens.
+The default mode is textContent. value sets a form control's value. Bindings do
+not edit registry data or install input handlers. Native zone ranges stay
+absolute, zero-based and inclusive; empty 0:0 zones return empty text.
+
+rgd.refText("i38db9") returns an exact decimal string, avoiding Number rounding.
+refText also accepts string, dbline, hexline, zone and zonehex refs. refGet now
+also accepts i38z1 and i38zh1; its existing numeric/object results are unchanged.
+Malformed or out-of-bounds browser zone reads fail with an Error.
+
+ZONE TEMPLATES
+
+Suppose zone i38z1 contains:
+
+  Hello %s. Score: %s. Viewer: {{$viewer}}
+
+  <section data-rgd-template="i38z1"
+           data-rgd-args='["i38s1","i38db9"]'></section>
+
+  const view = bindRegistry(rgd, document, { variables: { viewer: "Turtle" } });
+  view.render({ viewer: "Another visitor" });
+
+Each %s consumes one reference from the JSON argument array. Arguments may also
+be $variable names. %% prints a literal percent sign. Missing/unused arguments
+and missing variables throw. Named tokens can read refs directly:
+
+  Hello {{i38s1}}. Score: {{index:38:db:9}}. Viewer: {{$viewer}}
+
+Use data-rgd-template rather than data-rgd-ref to opt into substitution. Values
+are not recursively expanded and no JavaScript expressions are evaluated.
+Unrelated tokens such as {{message}} are left alone. Variables accept strings,
+numbers, bigints, booleans and null (empty text).
+
+Pure formatting needs no DOM and can also run in a worker:
+
+  import { formatTemplate } from "./regedited/pkg/dom.js";
+  formatTemplate(rgd, "Hello %s / {{$viewer}}", {
+    args: ["i38s1"], variables: { viewer: "Turtle" }
+  });
+
+HTML (EXPLICIT)
+
+  <article data-rgd-template="i38z1" data-rgd-mode="html"
+           data-rgd-args='["i38s1","i38db9"]'></article>
+
+  const view = bindRegistry(rgd, document, {
+    sanitizeHTML: (html) => yourSanitizer(html)
+  });
+
+HTML mode requires an application-supplied sanitizer; none is bundled. It gets
+the complete result and may return a string or TrustedHTML. Substitutions are
+HTML-escaped first, but the sanitizer must also enforce safe URL/attribute and
+markup rules. An identity callback is suitable only for entirely trusted
+templates in a controlled context. Prefer ordinary text bindings for remote
+or user-supplied data. Binding script/style/iframe and similar active targets
+is rejected; there is no automatic script execution or recursive DOM binding.
+
+REFRESH AND OWNERSHIP
+
+  rgd.replaceContent(updatedDocumentText);
+  view.render(); // reads the new snapshot; variables are retained
+  view.render({ viewer: "Updated" }); // merge supplied variables and refresh
+  view.dispose(); // leave rendered DOM intact; release binding references
+  rgd.dispose(); // caller owns the runner
+
+render() returns the number of bound elements. It resolves refs and validates
+all bindings before updating the live DOM, with one per-render reference cache.
+Only marked elements are changed; an outer binding owns its entire subtree.
+Document, Element (including itself), and DocumentFragment roots are supported.
+No timers, observers, background fetches or automatic HTTP refreshes are used.
+
+EXAMPLE AND CHECKS
+
+After webbuild, serve web/ and open example/dom.html for a working example,
+or tests/dom.html for real-browser checks. Pure formatter/zone checks are in
+tests/dom.test.mjs and run with the existing node --test web/tests/*.test.mjs.

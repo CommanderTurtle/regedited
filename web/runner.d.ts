@@ -63,6 +63,8 @@ export class RegeditedRunner {
   compactRef(value: string): string;
   convert(values: string | readonly (string | number)[], defaultType?: string): string;
   refGet(reference: string): RefValue;
+  /** Exact decimal text, string, zone content or zone bounds. No Number rounding. */
+  refText(reference: string): string;
   run(command: "scan" | "s"): ScanResult;
   run(command: "list" | "l"): Section[];
   run(command: "fgrep" | "f", pattern: string, scope?: string): GrepResult;

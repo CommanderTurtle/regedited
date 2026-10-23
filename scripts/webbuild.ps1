@@ -52,11 +52,11 @@ try {
     Pop-Location
 }
 
-foreach ($name in @('runner.js', 'runner.d.ts', 'package.json')) {
+foreach ($name in @('runner.js', 'runner.d.ts', 'dom.js', 'dom.d.ts', 'package.json')) {
     Copy-Item -LiteralPath (Join-Path $web $name) -Destination (Join-Path $pkg $name) -Force
 }
 
-$required = @('regedited_web.js', 'regedited_web_bg.wasm', 'runner.js', 'runner.d.ts', 'package.json')
+$required = @('regedited_web.js', 'regedited_web_bg.wasm', 'runner.js', 'runner.d.ts', 'dom.js', 'dom.d.ts', 'package.json')
 foreach ($name in $required) {
     $path = Join-Path $pkg $name
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Regedited DOM tests</title>
+<pre id="results">Running…</pre>
+<script type="module">
+  import { createRegeditedRunner } from "../pkg/runner.js";
+  import { bindRegistry } from "../pkg/dom.js";
+  const failures = [];
+  let passed = 0;
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const test = (name, run) => {
+    try { run(); passed++; } catch (error) { failures.push(`${name}: ${error.message}`); }
+  };
+  const throws = (run) => { let failed = false; try { run(); } catch { failed = true; } assert(failed, "expected an error"); };
+  const fixture = (html) => { const root = document.createElement("div"); root.innerHTML = html; return root; };
+  async function main() {
+    const source = [
+      "regedited open", "index: 38",
+      "0x0000008 : 0x0000009 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000",
+      "1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9007199254740993",
+      '<img src=x onerror="globalThis.compromised=true">', "literal %s {{i38db1}}", "three", "---",
+      "<h2>%s</h2>", "<p>Count: %s / {{$viewer}}</p>",
+    ].join("\n");
+    const rgd = await createRegeditedRunner(source);
+    try {
+      test("raw refs stay literal and value bindings preserve exact numbers", () => {
+        const root = fixture('<p data-rgd-ref="i38s1"></p><b data-rgd-ref="i38s2"></b><input data-rgd-ref="i38db9" data-rgd-mode="value">');
+        const view = bindRegistry(rgd, root);
+        assert(!root.querySelector("img"), "text became HTML");
+        assert(root.querySelector("b").textContent === "literal %s {{i38db1}}", "raw data was expanded");
+        assert(root.querySelector("input").value === "9007199254740993", "DB value was rounded");
+        view.dispose();
+      });
+      test("HTML needs explicit sanitizer and failures do not partially update text", () => {
+        const root = fixture('<p data-rgd-ref="i38s1">old</p><div data-rgd-template="i38z1" data-rgd-args=\'["i38s1","i38db9"]\' data-rgd-mode="html"></div>');
+        throws(() => bindRegistry(rgd, root, { variables: { viewer: "A" } }));
+        throws(() => bindRegistry(rgd, root, { variables: { viewer: "A" }, sanitizeHTML: async (html) => html }));
+        assert(root.querySelector("p").textContent === "old", "partial update");
+      });
+      test("trusted HTML templates escape data, refresh variables and read new registry content", () => {
+        const root = fixture('<article data-rgd-template="i38z1" data-rgd-args=\'["i38s1","i38db9"]\' data-rgd-mode="html"></article>');
+        // Identity is intentional for this fixed, trusted fixture; applications supply their sanitizer.
+        const view = bindRegistry(rgd, root, { variables: { viewer: "A" }, sanitizeHTML: (html) => html });
+        assert(root.querySelector("h2").textContent.includes("<img"), "data was not escaped");
+        assert(!root.querySelector("img"), "injected image exists");
+        assert(root.querySelector("p").textContent.endsWith(" / A"), "initial variable missing");
+        assert(view.render({ viewer: "B" }) === 1, "wrong render count");
+        assert(root.querySelector("p").textContent.endsWith(" / B"), "variable was stale");
+        rgd.replaceContent(source.replace('onerror="globalThis.compromised=true"', 'title="updated"'));
+        view.render();
+        assert(root.querySelector("h2").textContent.includes('title="updated"'), "registry was stale");
+        view.dispose(); view.dispose();
+        throws(() => view.render());
+        assert(rgd.refText("i38s3") === "three", "binding disposed its runner");
+      });
+      test("root bindings work and parent bindings own their subtree", () => {
+        const root = fixture('<p data-rgd-ref="i38s3"><span data-rgd-ref="i99s1"></span></p>').firstElementChild;
+        const view = bindRegistry(rgd, root);
+        assert(root.textContent === "three", "root was skipped");
+        assert(view.render() === 1, "nested binding was processed");
+        view.dispose();
+      });
+      test("invalid refs, modes, args and active elements fail before writes", () => {
+        for (const invalid of [
+          '<b data-rgd-ref="i99s1"></b>',
+          '<b data-rgd-ref="i38s1" data-rgd-template="i38z1"></b>',
+          '<b data-rgd-ref="i38s1" data-rgd-mode="bad"></b>',
+          '<b data-rgd-ref="i38s1" data-rgd-mode="value"></b>',
+          '<input type="file" data-rgd-ref="i38s1" data-rgd-mode="value">',
+          '<b data-rgd-template="i38z1" data-rgd-args="broken"></b>',
+          '<script data-rgd-ref="i38s1"><\/script>',
+        ]) {
+          const root = fixture('<p data-rgd-ref="i38s3">unchanged</p>' + invalid);
+          throws(() => bindRegistry(rgd, root));
+          assert(root.querySelector("p").textContent === "unchanged", "partial write");
+        }
+      });
+      assert(!globalThis.compromised, "data executed");
+    } finally { rgd.dispose(); }
+  }
+  main().catch((error) => failures.push(error.stack)).finally(() => {
+    globalThis.regeditedDOMResults = { passed, failures };
+    document.getElementById("results").textContent = JSON.stringify(globalThis.regeditedDOMResults, null, 2);
+  });
+</script>
+</html>

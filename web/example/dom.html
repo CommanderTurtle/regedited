@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Regedited DOM bindings</title>
+  <style>
+    :root { color-scheme: light dark; font: 15px system-ui, sans-serif; }
+    body { max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+    #card, pre { padding: 1rem; border: 1px solid #7776; margin: 1rem 0; }
+    label { display: block; margin: .75rem 0; }
+    input, button { padding: .4rem; font: inherit; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <a href="index.html">Registry playground</a>
+  <h1>DOM bindings</h1>
+  <section id="card">
+    <div data-rgd-template="i38z1" data-rgd-args='["i38s1","i38db9"]' data-rgd-mode="html"></div>
+    <small>Raw field: <span data-rgd-ref="i38s2"></span></small>
+  </section>
+  <label>Title <input id="title" value="Zone-backed card"></label>
+  <label>Viewer <input id="viewer" value="Turtle"></label>
+  <button id="render">Render</button>
+  <p id="status" role="status">Loading…</p>
+  <details><summary>Registry source</summary><pre id="source"></pre></details>
+  <script type="module">
+    import { createRegeditedRunner } from "../pkg/runner.js";
+    import { bindRegistry } from "../pkg/dom.js";
+    const $ = (id) => document.getElementById(id);
+    const source = () => [
+      "regedited open", "index: 38",
+      "0x0000008 : 0x0000009 : 0x0000000 : 0x0000000 : 0x0000000 : 0x0000000",
+      "1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9007199254740993",
+      $("title").value, "Tokens remain literal here: %s", "third string", "---",
+      "<h2>%s</h2>", "<p>%s points · viewer: {{$viewer}}</p>",
+    ].join("\n");
+    try {
+      const rgd = await createRegeditedRunner(source());
+      // This demo uses only the fixed HTML template above; external templates need a sanitizer.
+      const view = bindRegistry(rgd, $("card"), {
+        variables: { viewer: $("viewer").value }, sanitizeHTML: (html) => html,
+      });
+      $("source").textContent = rgd.rawContent;
+      $("status").textContent = "Ready";
+      $("render").onclick = () => {
+        try {
+          rgd.replaceContent(source());
+          view.render({ viewer: $("viewer").value });
+          $("source").textContent = rgd.rawContent;
+          $("status").textContent = "Rendered";
+        } catch (error) { $("status").textContent = error.message; }
+      };
+    } catch (error) { $("status").textContent = error.message; }
+  </script>
+</body>
+</html>

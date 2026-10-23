@@ -11,6 +11,8 @@ Expected project shape:
       regedited_web_bg.wasm.d.ts
       runner.js
       runner.d.ts
+      dom.js
+      dom.d.ts
       package.json
 
 Use the CLI-shaped runner from a module script:
@@ -53,3 +55,15 @@ An optional native server snapshot uses the same API:
 No connection is made unless requested. This reads one plaintext snapshot;
 normal browser CORS/local-network permissions apply. Static/file-based use
 does not require the native server.
+
+Optional DOM fields and zone templates (see docs/web/DOM.txt):
+
+  <h1 data-rgd-ref="i38s1"></h1>
+  <section data-rgd-template="i38z1" data-rgd-args='["i38s1","i38db1"]'></section>
+
+  import { bindRegistry } from "./regedited/pkg/dom.js";
+  const view = bindRegistry(rgd, document, { variables: { viewer: "Turtle" } });
+  view.render({ viewer: "Updated" });
+
+Fields render literally; templates opt into %s and {{i38s1}} / {{$viewer}}.
+Text is the default. HTML requires a sanitizer callback supplied by the page.
