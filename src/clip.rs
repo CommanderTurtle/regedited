@@ -22,6 +22,9 @@
 //! ```
 
 use crate::{RegeditedError, Result};
+#[cfg(all(feature = "clipboard", any(target_os = "linux", test)))]
+#[path = "clip_linux.rs"]
+mod linux;
 #[cfg(feature = "clipboard")]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -63,7 +66,13 @@ pub fn copy_to_clipboard(text: &str) -> Result<()> {
         ));
     }
 
-    #[cfg(feature = "clipboard")]
+    #[cfg(all(feature = "clipboard", target_os = "linux"))]
+    {
+        let _guard = clipboard_guard()?;
+        linux::copy(text).map_err(|e| RegeditedError::Clipboard(e.to_string()))
+    }
+
+    #[cfg(all(feature = "clipboard", not(target_os = "linux")))]
     {
         let _guard = clipboard_guard()?;
         let mut clipboard = arboard::Clipboard::new()
@@ -95,7 +104,13 @@ pub fn get_from_clipboard() -> Result<String> {
         ));
     }
 
-    #[cfg(feature = "clipboard")]
+    #[cfg(all(feature = "clipboard", target_os = "linux"))]
+    {
+        let _guard = clipboard_guard()?;
+        linux::paste().map_err(|e| RegeditedError::Clipboard(e.to_string()))
+    }
+
+    #[cfg(all(feature = "clipboard", not(target_os = "linux")))]
     {
         let _guard = clipboard_guard()?;
         let mut clipboard = arboard::Clipboard::new()

@@ -3,6 +3,9 @@ REGEDITED BASH INTERACTIVE REFERENCE
 This is plain text on purpose. It assumes you are sitting in an interactive Bash-like shell.
 On Windows Git Bash or WSL, clip.exe is usually the simplest pipe-to-clipboard target.
 The native Regedited clipboard route is better when available: ref-get ... --clip.
+On Linux, native clipboard commands prefer wl-copy/wl-paste in Wayland sessions,
+then xclip or xsel in X11 sessions. Existing helpers must be on PATH; no PowerShell
+shim is needed. Clipboard text keeps its Unicode and exact newlines.
 
 Core rule:
 Canonical index openers are any line containing the exact lowercase byte phrase regedited open.
